@@ -32,7 +32,7 @@ export async function GET() {
 
     const res = await gmail.users.messages.list({
       userId: 'me',
-      q: 'subject:"Motor Insurance Voice AI | Lead Funnel Report" newer_than:5d',
+      q: 'from:greylabs.ai newer_than:5d',
       maxResults: 1,
     });
 
