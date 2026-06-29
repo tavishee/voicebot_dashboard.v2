@@ -40,14 +40,11 @@ export default function Dashboard(){
   const[wowEnd,setWowEnd]=useState(todayStr());
   const[lFrom,setLFrom]=useState(weekStart(4));
   const[lTo,setLTo]=useState(todayStr());
-  // Enser
+  // Enser image upload
   const[eDate,setEDate]=useState(todayStr());
-  const[eSent,setESent]=useState('');
-  const[eAtt,setEAtt]=useState('');
-  const[eConn,setEConn]=useState('');
-  const[eConv,setEConv]=useState('');
-  const[eChurn,setEChurn]=useState('');
-  const[eCoc,setECoc]=useState('');
+  const[eImage,setEImage]=useState<File|null>(null);
+  const[ePreview,setEPreview]=useState('');
+  const[eParsed,setEParsed]=useState<any>(null);
   const[eSaving,setESaving]=useState(false);
   const[eSaved,setESaved]=useState('');
   // Backfill
@@ -62,20 +59,24 @@ export default function Dashboard(){
   };
   useEffect(()=>{load();},[]);
 
-  const saveEnser=async()=>{
-    setESaving(true);setESaved('');
-    try{
-      const res=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({date:eDate,cc_sent:eSent,cc_attempted:eAtt,cc_connected:eConn,
-          cc_converted:eConv,cc_churn:eChurn,cc_conversion_on_connect:eCoc})});
-      if(res.ok){setESaved('✓ Saved!');load();}else{const d=await res.json();setESaved('Error: '+d.error);}
-    }finally{setESaving(false);}
+  const uploadEnser = async () => {
+    if (!eImage) return;
+    setESaving(true); setESaved('');
+    try {
+      const fd = new FormData();
+      fd.append('image', eImage);
+      fd.append('date', eDate);
+      const res = await fetch('/api/enser', { method: 'POST', body: fd });
+      const d = await res.json();
+      if (d.success) { setESaved('✓ Saved!'); setEParsed(d.parsed); load(); }
+      else setESaved('Error: ' + d.error);
+    } finally { setESaving(false); }
   };
 
   const runBackfill=async()=>{
     setBfLoading(true);setBfStatus('Running...');
     try{
-      const res=await fetch(`/api/cron?date=${bfDate}`,{headers:{authorization:`Bearer ${process.env.NEXT_PUBLIC_CRON_SECRET||''}`}});
+      const res=await fetch(`/api/fetch-data?date=${bfDate}`);
       const d=await res.json();
       setBfStatus(d.success?`✓ Done for ${d.date}`:`✗ ${d.message||d.error}`);
       if(d.success)load();
@@ -353,34 +354,45 @@ export default function Dashboard(){
         </>}
 
         {/* DATA UPLOAD */}
-        {tab==='upload'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,maxWidth:800}}>
-          {/* Enser */}
+        {tab==='upload'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,maxWidth:900}}>
+          {/* Enser image upload */}
           <div style={card}>
-            <div style={cardT}><span style={bCC}>Enser</span> Upload daily data</div>
-            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>Type the numbers from the WhatsApp screenshot.</p>
-            <div style={{display:'flex',flexDirection:'column',gap:10}}>
-              {[
-                {l:'Date',v:eDate,s:setEDate,type:'date'},
-                {l:'Leads Count',v:eSent,s:setESent},{l:'Attempted',v:eAtt,s:setEAtt},
-                {l:'Connected',v:eConn,s:setEConn},{l:'Converted',v:eConv,s:setEConv},
-                {l:'Churn',v:eChurn,s:setEChurn},{l:'Conv on Connect % (e.g. 1.9)',v:eCoc,s:setECoc},
-              ].map(f=>(
-                <div key={f.l}>
-                  <label style={igL}>{f.l}</label>
-                  <input style={igI} type={(f as any).type||'number'} value={f.v} onChange={e=>f.s(e.target.value)}/>
-                </div>
-              ))}
+            <div style={cardT}><span style={bCC}>Enser</span> Upload WhatsApp screenshot</div>
+            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>Upload the L5 Leads Summary image — Gemini will read the numbers automatically.</p>
+            <div style={{marginBottom:10}}>
+              <label style={igL}>Date this report is for</label>
+              <input style={igI} type="date" value={eDate} onChange={e=>setEDate(e.target.value)}/>
             </div>
-            <button style={{...btnP,marginTop:14,width:'100%'}} onClick={saveEnser} disabled={eSaving}>
-              {eSaving?'Saving...':eSaved||'Save Enser data'}
+            <div
+              style={{border:`2px dashed ${eImage?C.greenM:C.border}`,borderRadius:8,padding:'20px',textAlign:'center',cursor:'pointer',marginBottom:12,background:eImage?C.greenL:'transparent',transition:'all .2s'}}
+              onClick={()=>document.getElementById('enser-file')?.click()}
+              onDragOver={e=>{e.preventDefault();}}
+              onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f){setEImage(f);setEPreview(URL.createObjectURL(f));}}}
+            >
+              {ePreview
+                ? <img src={ePreview} style={{maxWidth:'100%',maxHeight:160,borderRadius:4}} alt="preview"/>
+                : <div style={{color:C.text3,fontSize:13}}>Drag & drop or click to upload<br/><span style={{fontSize:11}}>JPG, PNG accepted</span></div>
+              }
+            </div>
+            <input id="enser-file" type="file" accept="image/*" style={{display:'none'}} onChange={e=>{const f=e.target.files?.[0];if(f){setEImage(f);setEPreview(URL.createObjectURL(f));}}}/>
+            <button style={{...btnP,width:'100%',background:eImage?C.greenM:'#ccc',cursor:eImage?'pointer':'not-allowed'}} onClick={uploadEnser} disabled={eSaving||!eImage}>
+              {eSaving?'Reading image...':'Upload & save'}
             </button>
+            {eSaved&&(
+              <div style={{marginTop:10,fontSize:12,padding:'8px 10px',borderRadius:6,background:eSaved.startsWith('✓')?C.greenL:C.redL,color:eSaved.startsWith('✓')?C.green:C.red}}>
+                {eSaved}
+                {eParsed&&<div style={{marginTop:6,fontSize:11}}>
+                  Sent: {eParsed.cc_sent} · Att: {eParsed.cc_attempted} · Conn: {eParsed.cc_connected} · Conv: {eParsed.cc_converted}
+                </div>}
+              </div>
+            )}
           </div>
 
           {/* GreyLabs backfill */}
           <div style={card}>
             <div style={cardT}><span style={bBot}>GreyLabs</span> Backfill from Gmail</div>
             <p style={{fontSize:12,color:C.text3,marginBottom:14}}>
-              Fetch GreyLabs data for a past date from your Gmail inbox. Make sure Gmail API is set up in Vercel env vars first.
+              Fetch GreyLabs data for a past date from your Gmail inbox.
             </p>
             <div style={{marginBottom:10}}>
               <label style={igL}>Date to fetch</label>
@@ -392,7 +404,7 @@ export default function Dashboard(){
             {bfStatus&&<div style={{marginTop:10,fontSize:12,color:bfStatus.startsWith('✓')?C.green:C.red,padding:'8px 10px',background:bfStatus.startsWith('✓')?C.greenL:C.redL,borderRadius:6}}>{bfStatus}</div>}
             <hr style={{border:'none',borderTop:`1px dashed ${C.border}`,margin:'14px 0'}}/>
             <p style={{fontSize:11,color:C.text3}}>
-              To backfill all 3 days: change the date above and click fetch for each day (26 Jun, 27 Jun, 28 Jun).
+              To backfill: change the date above and click fetch for each day.
             </p>
           </div>
         </div>}
