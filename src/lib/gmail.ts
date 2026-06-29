@@ -68,12 +68,12 @@ export async function fetchGreylabsData(dateStr: string) {
   const afterStr  = Math.floor(after.getTime()  / 1000);
   const beforeStr = Math.floor(before.getTime() / 1000);
 
-  const res = await gmail.users.messages.list({
+ const res = await gmail.users.messages.list({
     userId: 'me',
-    q: `subject:"${GRAYLABS_SUBJECT}" after:${afterStr} before:${beforeStr}`,
+    q: `subject:"${GRAYLABS_SUBJECT}" newer_than:5d`,
     maxResults: 5,
   });
-
+  
   const messages = res.data.messages;
   if (!messages?.length) {
     console.log(`GreyLabs email not found for ${dateStr}`);
