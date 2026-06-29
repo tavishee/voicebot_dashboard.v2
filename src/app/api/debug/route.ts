@@ -1,6 +1,25 @@
 import { NextResponse } from 'next/server';
 import { google } from 'googleapis';
 
+function decodeBase64(data: string): string {
+  return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
+}
+
+function getBody(payload: any): string {
+  if (!payload) return '';
+  if (payload.body?.data) return decodeBase64(payload.body.data);
+  if (payload.parts) {
+    for (const part of payload.parts) {
+      if (part.mimeType === 'text/html' && part.body?.data) return decodeBase64(part.body.data);
+    }
+    for (const part of payload.parts) {
+      if (part.mimeType === 'text/plain' && part.body?.data) return decodeBase64(part.body.data);
+      if (part.parts) { const n = getBody(part); if (n) return n; }
+    }
+  }
+  return '';
+}
+
 export async function GET() {
   try {
     const client = new google.auth.OAuth2(
@@ -13,7 +32,7 @@ export async function GET() {
 
     const res = await gmail.users.messages.list({
       userId: 'me',
-      q: 'subject:"GreyLabs AI] PayTM | Motor Insurance Voice AI | Lead Funnel Report" newer_than:5d',
+      q: 'subject:"Motor Insurance Voice AI | Lead Funnel Report" newer_than:5d',
       maxResults: 1,
     });
 
@@ -25,25 +44,6 @@ export async function GET() {
       id: messages[0].id!,
       format: 'full',
     });
-
-    function decodeBase64(data: string): string {
-      return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
-    }
-
-    function getBody(payload: any): string {
-      if (!payload) return '';
-      if (payload.body?.data) return decodeBase64(payload.body.data);
-      if (payload.parts) {
-        for (const part of payload.parts) {
-          if (part.mimeType === 'text/html' && part.body?.data) return decodeBase64(part.body.data);
-        }
-        for (const part of payload.parts) {
-          if (part.mimeType === 'text/plain' && part.body?.data) return decodeBase64(part.body.data);
-          if (part.parts) { const n = getBody(part); if (n) return n; }
-        }
-      }
-      return '';
-    }
 
     const body = getBody(msg.data.payload);
     const text = body.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
