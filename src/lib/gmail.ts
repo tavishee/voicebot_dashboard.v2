@@ -63,10 +63,10 @@ export async function fetchGreylabsData(dateStr: string) {
 
   // Search within a 3-day window around the target date to catch same-day emails
   const res = await gmail.users.messages.list({
-    userId: 'me',
-    q: `subject:"${GRAYLABS_SUBJECT}" newer_than:5d`,
-    maxResults: 5,
-  });
+      userId: 'me',
+      q: `from:customreports@greylabs.ai newer_than:2d`,
+      maxResults: 5,
+    });
   
   const messages = res.data.messages;
   if (!messages?.length) {
