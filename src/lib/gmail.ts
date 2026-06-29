@@ -1,6 +1,6 @@
 import { google } from 'googleapis';
 
-const GRAYLABS_SUBJECT = 'Motor Insurance - Voice AI | Intent Report with Lead IDs | Call Audit Report | Paytm Insurance';
+const GRAYLABS_SUBJECT = '[GreyLabs AI] PayTM | Motor Insurance Voice AI | Lead Funnel Report';
 
 function getOAuthClient() {
   const client = new google.auth.OAuth2(
