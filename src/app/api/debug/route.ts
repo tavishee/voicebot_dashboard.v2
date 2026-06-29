@@ -13,17 +13,47 @@ export async function GET() {
 
     const res = await gmail.users.messages.list({
       userId: 'me',
-      q: 'subject:"GreyLabs" newer_than:5d',
-      maxResults: 5,
+      q: 'subject:"GreyLabs AI] PayTM | Motor Insurance Voice AI | Lead Funnel Report" newer_than:5d',
+      maxResults: 1,
     });
 
     const messages = res.data.messages || [];
-    const details = await Promise.all(messages.slice(0,3).map(async m => {
-      const msg = await gmail.users.messages.get({ userId: 'me', id: m.id!, format: 'metadata', metadataHeaders: ['Subject', 'From'] });
-      return msg.data.payload?.headers;
-    }));
+    if (!messages.length) return NextResponse.json({ error: 'No messages found' });
 
-    return NextResponse.json({ count: messages.length, details });
+    const msg = await gmail.users.messages.get({
+      userId: 'me',
+      id: messages[0].id!,
+      format: 'full',
+    });
+
+    function decodeBase64(data: string): string {
+      return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
+    }
+
+    function getBody(payload: any): string {
+      if (!payload) return '';
+      if (payload.body?.data) return decodeBase64(payload.body.data);
+      if (payload.parts) {
+        for (const part of payload.parts) {
+          if (part.mimeType === 'text/html' && part.body?.data) return decodeBase64(part.body.data);
+        }
+        for (const part of payload.parts) {
+          if (part.mimeType === 'text/plain' && part.body?.data) return decodeBase64(part.body.data);
+          if (part.parts) { const n = getBody(part); if (n) return n; }
+        }
+      }
+      return '';
+    }
+
+    const body = getBody(msg.data.payload);
+    const text = body.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+    const freshIdx = text.indexOf('Fresh Lead Funnel');
+
+    return NextResponse.json({
+      bodyLength: body.length,
+      freshFound: freshIdx > -1,
+      freshSection: freshIdx > -1 ? text.slice(freshIdx, freshIdx + 500) : 'NOT FOUND',
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err.message });
   }
