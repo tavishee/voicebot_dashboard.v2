@@ -32,7 +32,7 @@ export async function GET() {
 
     const res = await gmail.users.messages.list({
       userId: 'me',
-      q: 'from:greylabs.ai newer_than:5d',
+      q: 'from:customreports@greylabs.ai',
       maxResults: 1,
     });
 
