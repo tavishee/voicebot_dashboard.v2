@@ -5,6 +5,9 @@ import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement
 import type { FunnelRow } from '@/lib/storage';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
+const SUPERSET_URL = 'https://insurance-analytic-platform.paytminsurance.co.in';
+const SUPERSET_LOGIN = `${SUPERSET_URL}/login/`;
+
 function todayStr() { return new Date().toISOString().slice(0,10); }
 function pct(a:number,b:number){return b>0?Math.round(a/b*1000)/10:0;}
 function fmtPct(v:number){return Math.round(v*1000)/10+'%';}
@@ -51,6 +54,10 @@ export default function Dashboard(){
   const[bfDate,setBfDate]=useState(todayStr());
   const[bfStatus,setBfStatus]=useState('');
   const[bfLoading,setBfLoading]=useState(false);
+  // Superset sync
+  const[ssLoading,setSsLoading]=useState(false);
+  const[ssStatus,setSsStatus]=useState('');
+  const[ssNeedsLogin,setSsNeedsLogin]=useState(false);
 
   const load=()=>{
     fetch('/api/data').then(r=>r.json())
@@ -82,6 +89,20 @@ export default function Dashboard(){
       if(d.success)load();
     }catch(e:any){setBfStatus('Error: '+e.message);}
     finally{setBfLoading(false);}
+  };
+
+  const syncSuperset=async()=>{
+    setSsLoading(true);setSsStatus('');setSsNeedsLogin(false);
+    try{
+      const cookie=document.cookie.split(';').map(c=>c.trim())
+        .filter(c=>c.startsWith('session=')||c.startsWith('remember_token=')).join('; ');
+      const res=await fetch('/api/enser-superset',{headers:cookie?{'x-superset-cookie':cookie}:{}});
+      const d=await res.json();
+      if(res.status===401||d.error==='SUPERSET_AUTH_REQUIRED'){setSsNeedsLogin(true);setSsStatus('');}
+      else if(d.success){setSsStatus(`✓ Synced ${d.count} day(s) from Superset`);load();}
+      else setSsStatus('Error: '+d.error);
+    }catch(e:any){setSsStatus('Error: '+e.message);}
+    finally{setSsLoading(false);}
   };
 
   const lastDate=rows.length?rows[rows.length-1].date:'—';
@@ -354,11 +375,51 @@ export default function Dashboard(){
         </>}
 
         {/* DATA UPLOAD */}
-        {tab==='upload'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,maxWidth:900}}>
-          {/* Enser image upload */}
+        {tab==='upload'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,maxWidth:1000}}>
+          {/* Enser via Superset */}
           <div style={card}>
-            <div style={cardT}><span style={bCC}>Enser</span> Upload WhatsApp screenshot</div>
-            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>Upload the L5 Leads Summary image — Gemini will read the numbers automatically.</p>
+            <div style={cardT}><span style={bCC}>Enser</span> Sync from Superset</div>
+            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>
+              Pulls CDR + converted-leads data directly from StarRocks via Superset. Requires you to be signed into Superset.
+            </p>
+            {ssNeedsLogin
+              ? <a
+                  href={`${SUPERSET_LOGIN}?next=${encodeURIComponent(typeof window!=='undefined'?window.location.href:'')}`}
+                  style={{display:'block',textAlign:'center',background:C.blue,color:'#fff',padding:'10px 0',borderRadius:8,fontSize:13,fontWeight:500,textDecoration:'none'}}
+                >
+                  Sign in to Superset →
+                </a>
+              : <button style={{...btnP,width:'100%',background:C.greenM}} onClick={syncSuperset} disabled={ssLoading}>
+                  {ssLoading?'Syncing...':'Sync from Superset'}
+                </button>
+            }
+            {ssStatus&&<div style={{marginTop:10,fontSize:12,color:ssStatus.startsWith('✓')?C.green:C.red,padding:'8px 10px',background:ssStatus.startsWith('✓')?C.greenL:C.redL,borderRadius:6}}>{ssStatus}</div>}
+            <hr style={{border:'none',borderTop:`1px dashed ${C.border}`,margin:'14px 0'}}/>
+            <p style={{fontSize:11,color:C.text3}}>
+              SQL queries are currently placeholders in <code>superset.ts</code> — replace with real CDR and converted-leads queries to go live.
+            </p>
+          </div>
+
+          {/* GreyLabs backfill */}
+          <div style={card}>
+            <div style={cardT}><span style={bBot}>GreyLabs</span> Backfill from Gmail</div>
+            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>
+              Fetch GreyLabs data for a past date from your Gmail inbox.
+            </p>
+            <div style={{marginBottom:10}}>
+              <label style={igL}>Date to fetch</label>
+              <input style={igI} type="date" value={bfDate} onChange={e=>setBfDate(e.target.value)}/>
+            </div>
+            <button style={{...btnP,width:'100%',background:C.blueM}} onClick={runBackfill} disabled={bfLoading}>
+              {bfLoading?'Fetching...':'Fetch from Gmail'}
+            </button>
+            {bfStatus&&<div style={{marginTop:10,fontSize:12,color:bfStatus.startsWith('✓')?C.green:C.red,padding:'8px 10px',background:bfStatus.startsWith('✓')?C.greenL:C.redL,borderRadius:6}}>{bfStatus}</div>}
+          </div>
+
+          {/* Enser image upload — fallback */}
+          <div style={card}>
+            <div style={cardT}><span style={bCC}>Enser</span> Manual upload (fallback)</div>
+            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>Upload the WhatsApp screenshot if Superset sync isn't ready yet.</p>
             <div style={{marginBottom:10}}>
               <label style={igL}>Date this report is for</label>
               <input style={igI} type="date" value={eDate} onChange={e=>setEDate(e.target.value)}/>
@@ -386,26 +447,6 @@ export default function Dashboard(){
                 </div>}
               </div>
             )}
-          </div>
-
-          {/* GreyLabs backfill */}
-          <div style={card}>
-            <div style={cardT}><span style={bBot}>GreyLabs</span> Backfill from Gmail</div>
-            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>
-              Fetch GreyLabs data for a past date from your Gmail inbox.
-            </p>
-            <div style={{marginBottom:10}}>
-              <label style={igL}>Date to fetch</label>
-              <input style={igI} type="date" value={bfDate} onChange={e=>setBfDate(e.target.value)}/>
-            </div>
-            <button style={{...btnP,width:'100%',background:C.blueM}} onClick={runBackfill} disabled={bfLoading}>
-              {bfLoading?'Fetching...':'Fetch from Gmail'}
-            </button>
-            {bfStatus&&<div style={{marginTop:10,fontSize:12,color:bfStatus.startsWith('✓')?C.green:C.red,padding:'8px 10px',background:bfStatus.startsWith('✓')?C.greenL:C.redL,borderRadius:6}}>{bfStatus}</div>}
-            <hr style={{border:'none',borderTop:`1px dashed ${C.border}`,margin:'14px 0'}}/>
-            <p style={{fontSize:11,color:C.text3}}>
-              To backfill: change the date above and click fetch for each day.
-            </p>
           </div>
         </div>}
       </div>
