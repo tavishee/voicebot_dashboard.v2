@@ -94,68 +94,86 @@ export default function Dashboard(){
   const syncSuperset=async()=>{
     setSsLoading(true);setSsStatus('');setSsNeedsLogin(false);
     try{
-      // Check if Chrome extension bridge is available
-      const bridge = (window as any).supersetBridge;
-      if(!bridge){
-        setSsStatus('Extension not detected. Install the Superset Bridge extension first.');
+      // Ping extension to check if it's there
+      const extensionReady = await new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => resolve(false), 2000);
+        function handler(e: MessageEvent) {
+          if (e.data?.source === 'superset-bridge' && e.data?.type === 'PONG') {
+            clearTimeout(timeout);
+            window.removeEventListener('message', handler);
+            resolve(true);
+          }
+        }
+        window.addEventListener('message', handler);
+        window.postMessage({ source: 'superset-dashboard', type: 'PING' }, '*');
+      });
+
+      if(!extensionReady){
+        setSsStatus('Extension not detected. Make sure Superset Bridge is installed in Chrome and this page is open in Chrome.');
         setSsLoading(false);
         return;
       }
 
-      // Check if logged into Superset
-      const authed = await bridge.checkAuth();
-      if(!authed){
-        setSsNeedsLogin(true);
-        setSsStatus('');
-        setSsLoading(false);
-        return;
-      }
+      // Check auth
+      const authed = await new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => resolve(false), 5000);
+        function handler(e: MessageEvent) {
+          if (e.data?.source === 'superset-bridge' && e.data?.type === 'AUTH_RESPONSE') {
+            clearTimeout(timeout);
+            window.removeEventListener('message', handler);
+            resolve(e.data.authenticated);
+          }
+        }
+        window.addEventListener('message', handler);
+        window.postMessage({ source: 'superset-dashboard', type: 'CHECK_AUTH' }, '*');
+      });
 
-      // Run placeholder SQL — replace with real queries later
-      // CDR query placeholder
-      const cdrSQL = `
-        SELECT
-          DATE(start_time) as date,
-          COUNT(*) as cc_sent,
-          SUM(CASE WHEN disposition1 = 'CONNECTED' THEN 1 ELSE 0 END) as cc_connected,
-          SUM(CASE WHEN disposition1 = 'ATTEMPTED' THEN 1 ELSE 0 END) as cc_attempted
-        FROM recent_search.enser_callback_data
-        WHERE source = 'enser'
-          AND customer_id <> 'NA'
-          AND service = 'Fresh_Car'
-          AND DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-        GROUP BY DATE(start_time)
-        ORDER BY date DESC
-      `;
+      if(!authed){ setSsNeedsLogin(true); setSsLoading(false); return; }
 
-      setSsStatus('Running query...');
-      const cdrRows = await bridge.query(cdrSQL);
+      // Run CDR query
+      const cdrSQL = `SELECT DATE(start_time) as date, COUNT(*) as cc_sent, SUM(CASE WHEN disposition1 = 'CONNECTED' THEN 1 ELSE 0 END) as cc_connected, SUM(CASE WHEN disposition1 = 'ATTEMPTED' THEN 1 ELSE 0 END) as cc_attempted FROM recent_search.enser_callback_data WHERE source = 'enser' AND customer_id <> 'NA' AND service = 'Fresh_Car' AND DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY DATE(start_time) ORDER BY date DESC`;
 
-      // Save each day to Redis via API
+      setSsStatus('Running query on Superset...');
+
+      const cdrRows = await new Promise<any[]>((resolve, reject) => {
+        const id = Math.random().toString(36).slice(2);
+        const timeout = setTimeout(() => reject(new Error('Query timeout')), 30000);
+        function handler(e: MessageEvent) {
+          if (e.data?.source === 'superset-bridge' && e.data?.type === 'SUPERSET_RESPONSE' && e.data?.id === id) {
+            clearTimeout(timeout);
+            window.removeEventListener('message', handler);
+            if (e.data.success) resolve(e.data.data);
+            else reject(new Error(e.data.error));
+          }
+        }
+        window.addEventListener('message', handler);
+        window.postMessage({ source: 'superset-dashboard', type: 'SUPERSET_QUERY', sql: cdrSQL, id }, '*');
+      });
+
+      // Save to Redis
       let saved = 0;
-      for(const r of cdrRows){
-        const date = String(r.date).slice(0,10);
-        await fetch('/api/enser',{
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({
+      for (const r of cdrRows) {
+        const date = String(r.date).slice(0, 10);
+        await fetch('/api/enser', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
             date,
             cc_sent:      Number(r.cc_sent)      || 0,
             cc_attempted: Number(r.cc_attempted) || 0,
             cc_connected: Number(r.cc_connected) || 0,
-            cc_converted: 0, // will come from conversions query later
+            cc_converted: 0,
             cc_churn: 0,
             cc_conversion_on_connect: 0,
           })
         });
         saved++;
       }
-
       setSsStatus(`✓ Synced ${saved} day(s) from Superset`);
       load();
-    }catch(e:any){
-      setSsStatus('Error: '+e.message);
-    }finally{
+    } catch(e: any) {
+      setSsStatus('Error: ' + e.message);
+    } finally {
       setSsLoading(false);
     }
   };
