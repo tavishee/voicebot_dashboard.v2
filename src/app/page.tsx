@@ -94,15 +94,70 @@ export default function Dashboard(){
   const syncSuperset=async()=>{
     setSsLoading(true);setSsStatus('');setSsNeedsLogin(false);
     try{
-      const cookie=document.cookie.split(';').map(c=>c.trim())
-        .filter(c=>c.startsWith('session=')||c.startsWith('remember_token=')).join('; ');
-      const res=await fetch('/api/enser-superset',{headers:cookie?{'x-superset-cookie':cookie}:{}});
-      const d=await res.json();
-      if(res.status===401||d.error==='SUPERSET_AUTH_REQUIRED'){setSsNeedsLogin(true);setSsStatus('');}
-      else if(d.success){setSsStatus(`✓ Synced ${d.count} day(s) from Superset`);load();}
-      else setSsStatus('Error: '+d.error);
-    }catch(e:any){setSsStatus('Error: '+e.message);}
-    finally{setSsLoading(false);}
+      // Check if Chrome extension bridge is available
+      const bridge = (window as any).supersetBridge;
+      if(!bridge){
+        setSsStatus('Extension not detected. Install the Superset Bridge extension first.');
+        setSsLoading(false);
+        return;
+      }
+
+      // Check if logged into Superset
+      const authed = await bridge.checkAuth();
+      if(!authed){
+        setSsNeedsLogin(true);
+        setSsStatus('');
+        setSsLoading(false);
+        return;
+      }
+
+      // Run placeholder SQL — replace with real queries later
+      // CDR query placeholder
+      const cdrSQL = `
+        SELECT
+          DATE(start_time) as date,
+          COUNT(*) as cc_sent,
+          SUM(CASE WHEN disposition1 = 'CONNECTED' THEN 1 ELSE 0 END) as cc_connected,
+          SUM(CASE WHEN disposition1 = 'ATTEMPTED' THEN 1 ELSE 0 END) as cc_attempted
+        FROM recent_search.enser_callback_data
+        WHERE source = 'enser'
+          AND customer_id <> 'NA'
+          AND service = 'Fresh_Car'
+          AND DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY DATE(start_time)
+        ORDER BY date DESC
+      `;
+
+      setSsStatus('Running query...');
+      const cdrRows = await bridge.query(cdrSQL);
+
+      // Save each day to Redis via API
+      let saved = 0;
+      for(const r of cdrRows){
+        const date = String(r.date).slice(0,10);
+        await fetch('/api/enser',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            date,
+            cc_sent:      Number(r.cc_sent)      || 0,
+            cc_attempted: Number(r.cc_attempted) || 0,
+            cc_connected: Number(r.cc_connected) || 0,
+            cc_converted: 0, // will come from conversions query later
+            cc_churn: 0,
+            cc_conversion_on_connect: 0,
+          })
+        });
+        saved++;
+      }
+
+      setSsStatus(`✓ Synced ${saved} day(s) from Superset`);
+      load();
+    }catch(e:any){
+      setSsStatus('Error: '+e.message);
+    }finally{
+      setSsLoading(false);
+    }
   };
 
   const lastDate=rows.length?rows[rows.length-1].date:'—';
