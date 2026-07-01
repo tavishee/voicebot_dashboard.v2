@@ -29,7 +29,16 @@ async function connect() {
   catch (error) {
     state.client = undefined;
     state.transport = undefined;
-    throw error;
+    const cause = error instanceof Error ? (error as Error & { cause?: any }).cause : null;
+    const detail = [
+      error instanceof Error ? error.message : String(error),
+      cause?.code,
+      cause?.address && cause?.port ? `${cause.address}:${cause.port}` : cause?.message,
+    ].filter(Boolean).join(' · ');
+    if (process.env.VERCEL && MCP_URL.includes('mcp-superset.platform.mypaytm.com')) {
+      throw new Error(`Superset MCP is on a private corporate network and is unreachable from Vercel (${detail}). Configure SUPERSET_MCP_URL with a publicly reachable company relay.`);
+    }
+    throw new Error(`Superset MCP connection failed: ${detail}`);
   } finally { state.connecting = undefined; }
 }
 
