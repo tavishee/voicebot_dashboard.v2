@@ -5,10 +5,8 @@ import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement
 import type { FunnelRow } from '@/lib/storage';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
-const SUPERSET_URL = 'https://insurance-analytic-platform.paytminsurance.co.in';
-const SUPERSET_LOGIN = `${SUPERSET_URL}/login/`;
-
 function todayStr() { return new Date().toISOString().slice(0,10); }
+function yesterdayStr() { const d=new Date(); d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); }
 function pct(a:number,b:number){return b>0?Math.round(a/b*1000)/10:0;}
 function fmtPct(v:number){return Math.round(v*1000)/10+'%';}
 function weekStart(n=0){const d=new Date();const dow=d.getDay()||7;d.setDate(d.getDate()-dow+1-n*7);return d.toISOString().slice(0,10);}
@@ -57,7 +55,8 @@ export default function Dashboard(){
   // Superset sync
   const[ssLoading,setSsLoading]=useState(false);
   const[ssStatus,setSsStatus]=useState('');
-  const[ssNeedsLogin,setSsNeedsLogin]=useState(false);
+  const[ssDate,setSsDate]=useState(yesterdayStr());
+  const[ssAuthUrl,setSsAuthUrl]=useState('');
 
   const load=()=>{
     fetch('/api/data').then(r=>r.json())
@@ -92,87 +91,26 @@ export default function Dashboard(){
   };
 
   const syncSuperset=async()=>{
-    setSsLoading(true);setSsStatus('');setSsNeedsLogin(false);
+    setSsLoading(true);
+    setSsStatus('Opening Superset sign-in if authorization is needed…');
     try{
-      // Ping extension to check if it's there
-      const extensionReady = await new Promise<boolean>((resolve) => {
-        const timeout = setTimeout(() => resolve(false), 2000);
-        function handler(e: MessageEvent) {
-          if (e.data?.source === 'superset-bridge' && e.data?.type === 'PONG') {
-            clearTimeout(timeout);
-            window.removeEventListener('message', handler);
-            resolve(true);
-          }
-        }
-        window.addEventListener('message', handler);
-        window.postMessage({ source: 'superset-dashboard', type: 'PING' }, '*');
+      const response=await fetch('/api/superset/sync',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate}),
       });
-
-      if(!extensionReady){
-        setSsStatus('Extension not detected. Make sure Superset Bridge is installed in Chrome and this page is open in Chrome.');
-        setSsLoading(false);
+      const data=await response.json();
+      if(response.status===401&&data.authUrl){
+        setSsAuthUrl(data.authUrl);
+        setSsStatus('Sign in to Superset in the new tab, then return here and click Continue sync.');
+        window.open(data.authUrl,'_blank','noopener,noreferrer');
         return;
       }
-
-      // Check auth
-      const authed = await new Promise<boolean>((resolve) => {
-        const timeout = setTimeout(() => resolve(false), 5000);
-        function handler(e: MessageEvent) {
-          if (e.data?.source === 'superset-bridge' && e.data?.type === 'AUTH_RESPONSE') {
-            clearTimeout(timeout);
-            window.removeEventListener('message', handler);
-            resolve(e.data.authenticated);
-          }
-        }
-        window.addEventListener('message', handler);
-        window.postMessage({ source: 'superset-dashboard', type: 'CHECK_AUTH' }, '*');
-      });
-
-      if(!authed){ setSsNeedsLogin(true); setSsLoading(false); return; }
-
-      // Run CDR query
-      const cdrSQL = `SELECT DATE(start_time) as date, COUNT(*) as cc_sent, SUM(CASE WHEN disposition1 = 'CONNECTED' THEN 1 ELSE 0 END) as cc_connected, SUM(CASE WHEN disposition1 = 'ATTEMPTED' THEN 1 ELSE 0 END) as cc_attempted FROM recent_search.enser_callback_data WHERE source = 'enser' AND customer_id <> 'NA' AND service = 'Fresh_Car' AND DATE(start_time) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY DATE(start_time) ORDER BY date DESC`;
-
-      setSsStatus('Running query on Superset...');
-
-      const cdrRows = await new Promise<any[]>((resolve, reject) => {
-        const id = Math.random().toString(36).slice(2);
-        const timeout = setTimeout(() => reject(new Error('Query timeout')), 30000);
-        function handler(e: MessageEvent) {
-          if (e.data?.source === 'superset-bridge' && e.data?.type === 'SUPERSET_RESPONSE' && e.data?.id === id) {
-            clearTimeout(timeout);
-            window.removeEventListener('message', handler);
-            if (e.data.success) resolve(e.data.data);
-            else reject(new Error(e.data.error));
-          }
-        }
-        window.addEventListener('message', handler);
-        window.postMessage({ source: 'superset-dashboard', type: 'SUPERSET_QUERY', sql: cdrSQL, id }, '*');
-      });
-
-      // Save to Redis
-      let saved = 0;
-      for (const r of cdrRows) {
-        const date = String(r.date).slice(0, 10);
-        await fetch('/api/enser', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            date,
-            cc_sent:      Number(r.cc_sent)      || 0,
-            cc_attempted: Number(r.cc_attempted) || 0,
-            cc_connected: Number(r.cc_connected) || 0,
-            cc_converted: 0,
-            cc_churn: 0,
-            cc_conversion_on_connect: 0,
-          })
-        });
-        saved++;
-      }
-      setSsStatus(`✓ Synced ${saved} day(s) from Superset`);
+      if(!response.ok)throw new Error(data.error||'Superset sync failed');
+      setSsAuthUrl('');
+      const c=data.counts;
+      setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);
       load();
     } catch(e: any) {
-      setSsStatus('Error: ' + e.message);
+      setSsStatus('Error: '+e.message);
     } finally {
       setSsLoading(false);
     }
@@ -562,23 +500,20 @@ export default function Dashboard(){
           <div style={card}>
             <div style={cardT}><span style={bCC}>Enser</span> Sync from Superset</div>
             <p style={{fontSize:12,color:C.text3,marginBottom:14}}>
-              Pulls CDR + converted-leads data directly from StarRocks via Superset. Requires you to be signed into Superset.
+              Pulls CDR and conversion data from StarRocks through the Superset MCP. Your browser will ask you to sign in on first use.
             </p>
-            {ssNeedsLogin
-              ? <a
-                  href={`${SUPERSET_LOGIN}?next=${encodeURIComponent(typeof window!=='undefined'?window.location.href:'')}`}
-                  style={{display:'block',textAlign:'center',background:C.blue,color:'#fff',padding:'10px 0',borderRadius:8,fontSize:13,fontWeight:500,textDecoration:'none'}}
-                >
-                  Sign in to Superset →
-                </a>
-              : <button style={{...btnP,width:'100%',background:C.greenM}} onClick={syncSuperset} disabled={ssLoading}>
-                  {ssLoading?'Syncing...':'Sync from Superset'}
-                </button>
-            }
-            {ssStatus&&<div style={{marginTop:10,fontSize:12,color:ssStatus.startsWith('✓')?C.green:C.red,padding:'8px 10px',background:ssStatus.startsWith('✓')?C.greenL:C.redL,borderRadius:6}}>{ssStatus}</div>}
+            <div style={{marginBottom:10}}>
+              <label style={igL}>Date to sync</label>
+              <input style={igI} type="date" value={ssDate} onChange={e=>setSsDate(e.target.value)}/>
+            </div>
+            <button style={{...btnP,width:'100%',background:C.greenM}} onClick={syncSuperset} disabled={ssLoading}>
+              {ssLoading?'Checking access…':ssAuthUrl?'Continue sync':'Sync from Superset'}
+            </button>
+            {ssAuthUrl&&<a href={ssAuthUrl} target="_blank" rel="noreferrer" style={{display:'block',textAlign:'center',marginTop:8,fontSize:12,color:C.blue}}>Open Superset sign-in again →</a>}
+            {ssStatus&&<div style={{marginTop:10,fontSize:12,color:ssStatus.startsWith('✓')?C.green:ssAuthUrl?C.amber:C.red,padding:'8px 10px',background:ssStatus.startsWith('✓')?C.greenL:ssAuthUrl?C.amberL:C.redL,borderRadius:6}}>{ssStatus}</div>}
             <hr style={{border:'none',borderTop:`1px dashed ${C.border}`,margin:'14px 0'}}/>
             <p style={{fontSize:11,color:C.text3}}>
-              SQL queries are currently placeholders in <code>superset.ts</code> — replace with real CDR and converted-leads queries to go live.
+              The conversion query runs first, followed by CDR for the selected calendar day.
             </p>
           </div>
 

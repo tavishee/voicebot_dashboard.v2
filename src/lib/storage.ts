@@ -1,4 +1,6 @@
 import { Redis } from '@upstash/redis';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 
 export type FunnelRow = {
   date:                     string;
@@ -36,6 +38,19 @@ function getRedis() {
 
 const INDEX_KEY  = 'funnel:index:v2';
 const ROW_PREFIX = 'funnel:row:v2:';
+const LOCAL_FILE = resolve(process.cwd(), '.data', 'funnel-rows.json');
+
+async function getLocalRows(): Promise<Record<string, FunnelRow>> {
+  try { return JSON.parse(await readFile(LOCAL_FILE, 'utf8')); }
+  catch { return {}; }
+}
+
+async function saveLocalRow(row: FunnelRow) {
+  const rows = await getLocalRows();
+  rows[row.date] = row;
+  await mkdir(dirname(LOCAL_FILE), { recursive: true });
+  await writeFile(LOCAL_FILE, JSON.stringify(rows, null, 2));
+}
 
 function dateScore(d: string) { return parseInt(d.replace(/-/g, ''), 10); }
 
@@ -62,15 +77,16 @@ function computeRates(r: FunnelRow): FunnelRow {
 
 export async function saveRow(row: FunnelRow) {
   const redis = getRedis();
-  if (!redis) { console.warn('Redis not configured'); return; }
   const computed = computeRates({ ...row });
+  if (!redis && process.env.VERCEL) throw new Error('Hosted storage is not configured. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel.');
+  if (!redis) { await saveLocalRow(computed); return; }
   await redis.set(ROW_PREFIX + row.date, JSON.stringify(computed));
   await redis.zadd(INDEX_KEY, { score: dateScore(row.date), member: row.date });
 }
 
 export async function getRow(date: string): Promise<FunnelRow | null> {
   const redis = getRedis();
-  if (!redis) return null;
+  if (!redis) return (await getLocalRows())[date] || null;
   try {
     const raw = await redis.get<string>(ROW_PREFIX + date);
     if (!raw) return null;
@@ -92,7 +108,7 @@ export async function saveEnserOnly(date: string, data: Partial<FunnelRow>) {
 
 export async function getAllRows(): Promise<FunnelRow[]> {
   const redis = getRedis();
-  if (!redis) return [];
+  if (!redis) return Object.values(await getLocalRows()).sort((a, b) => a.date.localeCompare(b.date));
   const dates = await redis.zrange(INDEX_KEY, 0, -1) as string[];
   if (!dates.length) return [];
   const rows = await Promise.all(dates.map(async d => {
