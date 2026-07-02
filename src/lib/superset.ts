@@ -39,7 +39,9 @@ export async function runSQL(sql: string, sessionCookie: string): Promise<any[]>
       runAsync: false,
       select_as_cta: false,
       tmp_table_name: '',
-      client_id: Math.random().toString(36).slice(2),
+      // NOTE: client_id intentionally omitted — Superset's internal
+      // `query` table caps it at varchar(11), so we let Superset
+      // generate its own short ID instead of sending one.
     }),
   });
 
