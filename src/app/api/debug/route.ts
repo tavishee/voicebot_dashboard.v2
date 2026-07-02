@@ -1,58 +1,96 @@
 import { NextResponse } from 'next/server';
 import { google } from 'googleapis';
+import * as XLSX from 'xlsx';
+
+function getOAuthClient() {
+  const client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+  client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+  return client;
+}
 
 function decodeBase64(data: string): string {
   return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
 }
 
-function getBody(payload: any): string {
-  if (!payload) return '';
-  if (payload.body?.data) return decodeBase64(payload.body.data);
-  if (payload.parts) {
-    for (const part of payload.parts) {
-      if (part.mimeType === 'text/html' && part.body?.data) return decodeBase64(part.body.data);
+function findAttachments(parts: any[], result: any[] = []): any[] {
+  for (const part of parts) {
+    if (part.filename && part.body?.attachmentId) {
+      result.push({ filename: part.filename, mimeType: part.mimeType, attachmentId: part.body.attachmentId });
     }
-    for (const part of payload.parts) {
-      if (part.mimeType === 'text/plain' && part.body?.data) return decodeBase64(part.body.data);
-      if (part.parts) { const n = getBody(part); if (n) return n; }
-    }
+    if (part.parts) findAttachments(part.parts, result);
   }
-  return '';
+  return result;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI
-    );
-    client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
-    const gmail = google.gmail({ version: 'v1', auth: client });
+    const url  = new URL(request.url);
+    const date = url.searchParams.get('date') || '2026-06-28';
+
+    const auth  = getOAuthClient();
+    const gmail = google.gmail({ version: 'v1', auth });
+
+    const target   = new Date(date + 'T00:00:00+05:30');
+    const after    = new Date(target); after.setDate(target.getDate() - 1);
+    const before   = new Date(target); before.setDate(target.getDate() + 1);
+    const afterTs  = Math.floor(after.getTime() / 1000);
+    const beforeTs = Math.floor(before.getTime() / 1000);
 
     const res = await gmail.users.messages.list({
       userId: 'me',
-      q: 'from:customreports@greylabs.ai',
-      maxResults: 1,
+      q: `from:customreports@greylabs.ai after:${afterTs} before:${beforeTs}`,
+      maxResults: 5,
     });
 
-    const messages = res.data.messages || [];
-    if (!messages.length) return NextResponse.json({ error: 'No messages found' });
+    if (!res.data.messages?.length) {
+      return NextResponse.json({ error: 'No emails found' });
+    }
 
     const msg = await gmail.users.messages.get({
       userId: 'me',
-      id: messages[0].id!,
+      id: res.data.messages[0].id!,
       format: 'full',
     });
 
-    const body = getBody(msg.data.payload);
-    const text = body.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
-    const freshIdx = text.indexOf('Fresh Lead Funnel');
+    const attachments = findAttachments(msg.data.payload?.parts || []);
+
+    // Try to read the first xlsx attachment
+    let sheetInfo: any = null;
+    const xlsxAtt = attachments.find(a => a.filename?.toLowerCase().endsWith('.xlsx') || a.filename?.toLowerCase().endsWith('.xls'));
+    
+    if (xlsxAtt) {
+      const att = await gmail.users.messages.attachments.get({
+        userId: 'me',
+        messageId: res.data.messages[0].id!,
+        id: xlsxAtt.attachmentId,
+      });
+      const buffer = Buffer.from(att.data.data, 'base64');
+      const wb = XLSX.read(buffer, { type: 'buffer' });
+      sheetInfo = {
+        sheetNames: wb.SheetNames,
+        sheets: {} as any,
+      };
+      for (const name of wb.SheetNames) {
+        const ws = wb.Sheets[name];
+        const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        sheetInfo.sheets[name] = {
+          rowCount: rows.length,
+          headers: rows[0] || [],
+          firstDataRow: rows[1] || [],
+        };
+      }
+    }
 
     return NextResponse.json({
-      bodyLength: body.length,
-      freshFound: freshIdx > -1,
-      freshSection: freshIdx > -1 ? text.slice(freshIdx, freshIdx + 500) : 'NOT FOUND',
+      emailFound: true,
+      subject: msg.data.payload?.headers?.find((h: any) => h.name === 'Subject')?.value,
+      attachments: attachments.map(a => ({ filename: a.filename, mimeType: a.mimeType })),
+      xlsxFound: !!xlsxAtt,
+      sheetInfo,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message });
