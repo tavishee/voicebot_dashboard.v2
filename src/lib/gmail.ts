@@ -85,14 +85,30 @@ async function extractLeadIds(gmail: any, messageId: string, attachmentId: strin
 
   function getIdsFromSheet(sheetName: string): string[] {
     const found = wb.SheetNames.find(n => n.toLowerCase().includes(sheetName.toLowerCase()));
-    if (!found) { console.log(`Sheet not found matching "${sheetName}". Available: ${wb.SheetNames.join(', ')}`); return []; }
+    if (!found) {
+      console.log(`Sheet not found matching "${sheetName}". Available: ${wb.SheetNames.join(', ')}`);
+      return [];
+    }
     const ws = wb.Sheets[found];
     const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
     if (rows.length < 2) return [];
-    const headers = rows[0].map((h: any) => String(h || '').trim().toLowerCase());
-    const col = headers.findIndex(h => h === 'lead id' || h === 'lead_id' || h === 'leadid');
-    if (col === -1) { console.log(`"Lead ID" column not found. Headers: ${headers.join(', ')}`); return []; }
-    return rows.slice(1).map(r => String(r[col] || '').trim()).filter(id => id && id !== 'undefined');
+
+    // Search first 10 rows for "Lead ID" header (it's in row 5, not row 1)
+    let headerRowIdx = -1;
+    let col = -1;
+    for (let i = 0; i < Math.min(rows.length, 10); i++) {
+      const headers = rows[i].map((h: any) => String(h || '').trim().toLowerCase());
+      const found2 = headers.findIndex(h => h === 'lead id' || h === 'lead_id' || h === 'leadid');
+      if (found2 !== -1) { headerRowIdx = i; col = found2; break; }
+    }
+    if (col === -1) {
+      console.log(`"Lead ID" column not found in first 10 rows of sheet "${found}"`);
+      return [];
+    }
+
+    return rows.slice(headerRowIdx + 1)
+      .map(r => String(r[col] || '').trim())
+      .filter(id => id && id !== 'undefined' && id !== 'null' && id !== 'None');
   }
 
   const freshIds    = getIdsFromSheet('Fresh');
@@ -132,6 +148,8 @@ export async function fetchGreylabsData(dateStr: string) {
       freshIds = ids.freshIds;
       retainedIds = ids.retainedIds;
     } catch (e: any) { console.log('Could not extract Lead IDs:', e.message); }
+  } else {
+    console.log('No xlsx attachment found in email');
   }
   return { ...funnelData, freshIds, retainedIds };
 }
