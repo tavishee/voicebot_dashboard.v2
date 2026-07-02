@@ -3,7 +3,10 @@ import { useEffect, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip } from 'chart.js';
 import type { FunnelRow } from '@/lib/storage';
+import { cdrQuery, conversionQuery } from '@/lib/superset-queries';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
+
+const SUPERSET_LOGIN = 'https://insurance-analytic-platform.paytminsurance.co.in/login/';
 
 function todayStr() { return new Date().toISOString().slice(0,10); }
 function yesterdayStr() { const d=new Date(); d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); }
@@ -92,8 +95,34 @@ export default function Dashboard(){
 
   const syncSuperset=async()=>{
     setSsLoading(true);
-    setSsStatus('Opening Superset sign-in if authorization is needed…');
+    setSsStatus('Checking the Superset browser bridge…');
     try{
+      const extensionCall=(type:string,payload:any={},timeout=300000)=>new Promise<any>((resolve,reject)=>{
+        const id=Math.random().toString(36).slice(2);
+        const timer=setTimeout(()=>{window.removeEventListener('message',handler);reject(new Error(type==='PING'?'EXTENSION_NOT_FOUND':'Superset bridge timed out'));},timeout);
+        function handler(event:MessageEvent){
+          if(event.source!==window||event.data?.source!=='superset-bridge'||event.data?.id!==id)return;
+          clearTimeout(timer);window.removeEventListener('message',handler);
+          event.data.success?resolve(event.data.data):reject(new Error(event.data.error||'Superset bridge failed'));
+        }
+        window.addEventListener('message',handler);
+        window.postMessage({source:'voicebot-dashboard',type,id,...payload},'*');
+      });
+      let extensionReady=false;
+      try{await extensionCall('PING',{},1200);extensionReady=true;}catch{}
+      if(extensionReady){
+        const next=new Date(`${ssDate}T00:00:00Z`);next.setUTCDate(next.getUTCDate()+1);
+        const nextDate=next.toISOString().slice(0,10);
+        setSsStatus('Running conversion query in Superset…');
+        const conversionRows=await extensionCall('RUN_QUERY',{sql:conversionQuery(ssDate,nextDate)});
+        setSsStatus('Running CDR query in Superset…');
+        const cdrRows=await extensionCall('RUN_QUERY',{sql:cdrQuery(ssDate,nextDate)});
+        const c={cc_sent:Number(cdrRows?.[0]?.cc_sent)||0,cc_attempted:Number(cdrRows?.[0]?.cc_attempted)||0,cc_connected:Number(cdrRows?.[0]?.cc_connected)||0,cc_converted:Number(conversionRows?.[0]?.cc_converted)||0};
+        const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_churn:0,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
+        const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
+        setSsAuthUrl('');setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);load();return;
+      }
+      if(window.location.hostname!=='127.0.0.1'&&window.location.hostname!=='localhost')throw new Error('Chrome extension not detected. Install the Voicebot Superset Bridge, then reload this page.');
       const response=await fetch('/api/superset/sync',{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate}),
       });
@@ -110,6 +139,9 @@ export default function Dashboard(){
       setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);
       load();
     } catch(e: any) {
+      if(String(e.message).includes('SUPERSET_AUTH_REQUIRED')){
+        setSsAuthUrl(SUPERSET_LOGIN);setSsStatus('Sign in to Superset, then return here and click Continue sync.');window.open(SUPERSET_LOGIN,'_blank','noopener,noreferrer');return;
+      }
       setSsStatus('Error: '+e.message);
     } finally {
       setSsLoading(false);
@@ -500,7 +532,7 @@ export default function Dashboard(){
           <div style={card}>
             <div style={cardT}><span style={bCC}>Enser</span> Sync from Superset</div>
             <p style={{fontSize:12,color:C.text3,marginBottom:14}}>
-              Pulls CDR and conversion data from StarRocks through the Superset MCP. Your browser will ask you to sign in on first use.
+              Uses the Voicebot Superset Bridge extension to query through your corporate network and existing Superset login.
             </p>
             <div style={{marginBottom:10}}>
               <label style={igL}>Date to sync</label>
