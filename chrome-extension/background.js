@@ -18,12 +18,13 @@ async function runQueryInSupersetTab(sql) {
     target: { tabId: tab.id }, world: 'MAIN', args: [sql, DATABASE_ID, SUPERSET_URL],
     func: async (query, databaseId, baseUrl) => {
       try {
-        const csrfResponse = await fetch(`${baseUrl}/api/v1/security/csrf_token/`, { credentials: 'include', headers: { Accept: 'application/json' } });
+        const sqlLabUrl = `${baseUrl}/sqllab/`;
+        const csrfResponse = await fetch(`${baseUrl}/api/v1/security/csrf_token/`, { credentials: 'include', headers: { Accept: 'application/json' }, referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin' });
         if (csrfResponse.status === 401 || csrfResponse.status === 403) return { error: 'SUPERSET_AUTH_REQUIRED' };
         if (!csrfResponse.ok) return { error: `CSRF request failed (${csrfResponse.status}): ${(await csrfResponse.text()).slice(0, 500)}` };
         const csrf = (await csrfResponse.json()).result;
         const queryResponse = await fetch(`${baseUrl}/api/v1/sqllab/execute/`, {
-          method: 'POST', credentials: 'include',
+          method: 'POST', credentials: 'include', referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRFToken': csrf },
           body: JSON.stringify({ database_id: databaseId, sql: query, runAsync: false, select_as_cta: false, tmp_table_name: '', client_id: crypto.randomUUID() }),
         });
