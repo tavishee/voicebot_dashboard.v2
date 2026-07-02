@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { checkSupersetAuth, runSupersetQuery } from '@/lib/superset-mcp';
-import { cdrQuery, conversionQuery } from '@/lib/superset-queries';
+import { combinedQuery } from '@/lib/superset-queries';
 import { saveEnserOnly } from '@/lib/storage';
 
 export const runtime = 'nodejs';
@@ -23,12 +23,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'SUPERSET_AUTH_REQUIRED', authUrl: auth.authUrl }, { status: 401 });
     }
 
-    const conversionRows = await runSupersetQuery(conversionQuery(date, nextDate));
-    const cdrRows = await runSupersetQuery(cdrQuery(date, nextDate));
-    const ccSent = Number(cdrRows[0]?.cc_sent) || 0;
-    const ccAttempted = Number(cdrRows[0]?.cc_attempted) || 0;
-    const ccConnected = Number(cdrRows[0]?.cc_connected) || 0;
-    const ccConverted = Number(conversionRows[0]?.cc_converted) || 0;
+    const rows = await runSupersetQuery(combinedQuery(date, nextDate));
+    const ccSent = Number(rows[0]?.cc_sent) || 0;
+    const ccAttempted = Number(rows[0]?.cc_attempted) || 0;
+    const ccConnected = Number(rows[0]?.cc_connected) || 0;
+    const ccConverted = Number(rows[0]?.cc_converted) || 0;
 
     await saveEnserOnly(date, {
       cc_sent: ccSent,
@@ -43,7 +42,7 @@ export async function POST(request: Request) {
       success: true,
       date,
       counts: { cc_sent: ccSent, cc_attempted: ccAttempted, cc_connected: ccConnected, cc_converted: ccConverted },
-      sourceRows: { cdr: cdrRows.length, conversions: conversionRows.length },
+      sourceRows: { combined: rows.length },
     });
   } catch (error: unknown) {
     const typed = error as Error & { authUrl?: string };

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip } from 'chart.js';
 import type { FunnelRow } from '@/lib/storage';
-import { cdrQuery, conversionQuery } from '@/lib/superset-queries';
+import { combinedQuery } from '@/lib/superset-queries';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
 const SUPERSET_LOGIN = 'https://insurance-analytic-platform.paytminsurance.co.in/superset/welcome/';
@@ -113,11 +113,9 @@ export default function Dashboard(){
       if(extensionReady){
         const next=new Date(`${ssDate}T00:00:00Z`);next.setUTCDate(next.getUTCDate()+1);
         const nextDate=next.toISOString().slice(0,10);
-        setSsStatus('Running conversion query in Superset…');
-        const conversionRows=await extensionCall('RUN_QUERY',{sql:conversionQuery(ssDate,nextDate)});
-        setSsStatus('Running CDR query in Superset…');
-        const cdrRows=await extensionCall('RUN_QUERY',{sql:cdrQuery(ssDate,nextDate)});
-        const c={cc_sent:Number(cdrRows?.[0]?.cc_sent)||0,cc_attempted:Number(cdrRows?.[0]?.cc_attempted)||0,cc_connected:Number(cdrRows?.[0]?.cc_connected)||0,cc_converted:Number(conversionRows?.[0]?.cc_converted)||0};
+        setSsStatus('Running combined calls and conversion query in Superset…');
+        const rows=await extensionCall('RUN_QUERY',{sql:combinedQuery(ssDate,nextDate)});
+        const c={cc_sent:Number(rows?.[0]?.cc_sent)||0,cc_attempted:Number(rows?.[0]?.cc_attempted)||0,cc_connected:Number(rows?.[0]?.cc_connected)||0,cc_converted:Number(rows?.[0]?.cc_converted)||0};
         const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_churn:0,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
         setSsAuthUrl('');setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);load();return;
@@ -544,7 +542,7 @@ export default function Dashboard(){
             {ssStatus&&<div style={{marginTop:10,fontSize:12,color:ssStatus.startsWith('✓')?C.green:ssAuthUrl?C.amber:C.red,padding:'8px 10px',background:ssStatus.startsWith('✓')?C.greenL:ssAuthUrl?C.amberL:C.redL,borderRadius:6}}>{ssStatus}</div>}
             <hr style={{border:'none',borderTop:`1px dashed ${C.border}`,margin:'14px 0'}}/>
             <p style={{fontSize:11,color:C.text3}}>
-              The conversion query runs first, followed by CDR for the selected calendar day.
+              Calls and attributed conversions are fetched together for the selected calendar day.
             </p>
           </div>
 
