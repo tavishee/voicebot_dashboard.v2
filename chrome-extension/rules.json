@@ -1,0 +1,18 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [{
+        "header": "Referer",
+        "operation": "set",
+        "value": "https://insurance-analytic-platform.paytminsurance.co.in/sqllab/"
+      }]
+    },
+    "condition": {
+      "urlFilter": "||insurance-analytic-platform.paytminsurance.co.in/api/v1/",
+      "resourceTypes": ["xmlhttprequest"]
+    }
+  }
+]

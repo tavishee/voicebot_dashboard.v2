@@ -1,11 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Voicebot Superset Bridge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Runs approved Voicebot dashboard queries through the user's authenticated Superset session.",
-  "permissions": ["scripting", "tabs"],
+  "permissions": ["scripting", "tabs", "declarativeNetRequestWithHostAccess"],
   "host_permissions": ["https://insurance-analytic-platform.paytminsurance.co.in/*"],
   "background": { "service_worker": "background.js" },
+  "declarative_net_request": {
+    "rule_resources": [{ "id": "superset_headers", "enabled": true, "path": "rules.json" }]
+  },
   "content_scripts": [{
     "matches": ["http://127.0.0.1:3000/*", "http://localhost:3000/*", "https://*.vercel.app/*"],
     "js": ["content.js"],
