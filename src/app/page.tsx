@@ -6,7 +6,7 @@ import type { FunnelRow } from '@/lib/storage';
 import { cdrQuery, conversionQuery } from '@/lib/superset-queries';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
-const SUPERSET_LOGIN = 'https://insurance-analytic-platform.paytminsurance.co.in/login/';
+const SUPERSET_LOGIN = 'https://insurance-analytic-platform.paytminsurance.co.in/sqllab/';
 
 function todayStr() { return new Date().toISOString().slice(0,10); }
 function yesterdayStr() { const d=new Date(); d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); }
@@ -130,7 +130,6 @@ export default function Dashboard(){
       if(response.status===401&&data.authUrl){
         setSsAuthUrl(data.authUrl);
         setSsStatus('Sign in to Superset in the new tab, then return here and click Continue sync.');
-        window.open(data.authUrl,'_blank','noopener,noreferrer');
         return;
       }
       if(!response.ok)throw new Error(data.error||'Superset sync failed');
@@ -139,8 +138,8 @@ export default function Dashboard(){
       setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);
       load();
     } catch(e: any) {
-      if(String(e.message).includes('SUPERSET_AUTH_REQUIRED')){
-        setSsAuthUrl(SUPERSET_LOGIN);setSsStatus('Sign in to Superset, then return here and click Continue sync.');window.open(SUPERSET_LOGIN,'_blank','noopener,noreferrer');return;
+      if(String(e.message).includes('SUPERSET_AUTH_REQUIRED')||String(e.message).includes('SUPERSET_TAB_REQUIRED')){
+        setSsAuthUrl(SUPERSET_LOGIN);setSsStatus('Open Superset SQL Lab in another tab and sign in. Keep that tab open, then click Continue sync.');return;
       }
       setSsStatus('Error: '+e.message);
     } finally {

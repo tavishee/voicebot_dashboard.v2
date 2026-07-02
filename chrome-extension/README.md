@@ -4,7 +4,7 @@ This extension lets the Vercel-hosted dashboard query private Superset through C
 
 ## Install
 
-1. Connect Chrome to the corporate network/VPN and sign in to Superset.
+1. Connect Chrome to the corporate network/VPN and open Superset SQL Lab in a tab. Keep this tab open.
 2. Open `chrome://extensions`.
 3. Enable **Developer mode**.
 4. Click **Load unpacked**.
