@@ -1,6 +1,5 @@
 import { google } from 'googleapis';
-
-const GRAYLABS_SUBJECT = '[GreyLabs AI] PayTM | Motor Insurance Voice AI | Lead Funnel Report';
+import * as XLSX from 'xlsx';
 
 function getOAuthClient() {
   const client = new google.auth.OAuth2(
@@ -31,67 +30,108 @@ function getEmailBody(payload: any): string {
   return '';
 }
 
+function findXlsxAttachment(parts: any[]): { attachmentId: string } | null {
+  for (const part of parts) {
+    const name = (part.filename || '').toLowerCase();
+    if ((name.endsWith('.xlsx') || name.endsWith('.xls')) && part.body?.attachmentId) {
+      return { attachmentId: part.body.attachmentId };
+    }
+    if (part.parts) {
+      const found = findXlsxAttachment(part.parts);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function extractNumber(label: string, text: string): number {
   const pattern = new RegExp(label + '[^0-9]*([0-9,]+)', 'i');
-  const match   = text.match(pattern);
+  const match = text.match(pattern);
   return match ? parseInt(match[1].replace(/,/g, '')) : 0;
 }
 
-function parseFreshFunnel(body: string) {
-  const text      = body.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
-  const freshIdx  = text.indexOf('Fresh Lead Funnel');
-  if (freshIdx === -1) { console.log('Fresh Lead Funnel not found'); return null; }
-  const retainedIdx = text.indexOf('Retained Lead Funnel', freshIdx);
-  const section   = retainedIdx > -1 ? text.slice(freshIdx, retainedIdx) : text.slice(freshIdx, freshIdx + 2000);
-
-  const bot_sent      = extractNumber('Total Leads', section);
-  const bot_dialled   = extractNumber('Total Dialed', section);
-  const bot_connected = extractNumber('Connected', section);
-  const bot_qualified = extractNumber('Qualified', section);
-  const high_intent   = extractNumber('High Intent', section);
-  const medium_intent = extractNumber('Medium Intent', section);
-  const low_intent    = extractNumber('Low Intent', section);
-
-  if (!bot_sent) { console.log('Could not parse numbers from Fresh Lead Funnel section'); return null; }
-  return { bot_sent, bot_dialled, bot_connected, bot_qualified, high_intent, medium_intent, low_intent };
+function parseFunnelSection(section: string) {
+  return {
+    sent:      extractNumber('Total Leads', section),
+    dialled:   extractNumber('Total Dialed', section),
+    connected: extractNumber('Connected', section),
+    qualified: extractNumber('Qualified', section),
+    high:      extractNumber('High Intent', section),
+    medium:    extractNumber('Medium Intent', section),
+    low:       extractNumber('Low Intent', section),
+    callback:  extractNumber('Callback', section),
+  };
 }
 
-// Fetch email for a specific date (for backfill) or today
+function parseEmailBody(body: string) {
+  const text = body.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+  const freshIdx    = text.indexOf('Fresh Lead Funnel');
+  const retainedIdx = text.indexOf('Retained Lead Funnel');
+  if (freshIdx === -1) { console.log('Fresh Lead Funnel not found'); return null; }
+  const freshSection    = retainedIdx > -1 ? text.slice(freshIdx, retainedIdx) : text.slice(freshIdx, freshIdx + 2000);
+  const retainedSection = retainedIdx > -1 ? text.slice(retainedIdx, retainedIdx + 2000) : null;
+  const fresh    = parseFunnelSection(freshSection);
+  const retained = retainedSection ? parseFunnelSection(retainedSection) : null;
+  if (!fresh.sent) { console.log('Could not parse Fresh Lead Funnel numbers'); return null; }
+  return { fresh, retained };
+}
+
+async function extractLeadIds(gmail: any, messageId: string, attachmentId: string) {
+  const att = await gmail.users.messages.attachments.get({
+    userId: 'me', messageId, id: attachmentId,
+  });
+  const buffer = Buffer.from(att.data.data, 'base64');
+  const wb = XLSX.read(buffer, { type: 'buffer' });
+
+  function getIdsFromSheet(sheetName: string): string[] {
+    const found = wb.SheetNames.find(n => n.toLowerCase().includes(sheetName.toLowerCase()));
+    if (!found) { console.log(`Sheet not found matching "${sheetName}". Available: ${wb.SheetNames.join(', ')}`); return []; }
+    const ws = wb.Sheets[found];
+    const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    if (rows.length < 2) return [];
+    const headers = rows[0].map((h: any) => String(h || '').trim().toLowerCase());
+    const col = headers.findIndex(h => h === 'lead id' || h === 'lead_id' || h === 'leadid');
+    if (col === -1) { console.log(`"Lead ID" column not found. Headers: ${headers.join(', ')}`); return []; }
+    return rows.slice(1).map(r => String(r[col] || '').trim()).filter(id => id && id !== 'undefined');
+  }
+
+  const freshIds    = getIdsFromSheet('Fresh');
+  const retainedIds = getIdsFromSheet('Retained');
+  console.log(`Lead IDs — Fresh: ${freshIds.length}, Retained: ${retainedIds.length}`);
+  return { freshIds, retainedIds };
+}
+
 export async function fetchGreylabsData(dateStr: string) {
   const auth  = getOAuthClient();
   const gmail = google.gmail({ version: 'v1', auth });
-
-  // Search within a 3-day window around the target date to catch same-day emails
-  const target = new Date(dateStr + 'T00:00:00+05:30'); // IST
-    const after  = new Date(target); after.setDate(target.getDate() - 1);
-    const before = new Date(target); before.setDate(target.getDate() + 1);
-    const afterTs  = Math.floor(after.getTime() / 1000);
-    const beforeTs = Math.floor(before.getTime() / 1000);
-
-    const res = await gmail.users.messages.list({
-      userId: 'me',
-      q: `from:customreports@greylabs.ai after:${afterTs} before:${beforeTs}`,
-      maxResults: 5,
-    });
-  
-  const messages = res.data.messages;
-  if (!messages?.length) {
-    console.log(`GreyLabs email not found for ${dateStr}`);
-    return null;
-  }
-
-  const msg = await gmail.users.messages.get({
+  const target   = new Date(dateStr + 'T00:00:00+05:30');
+  const after    = new Date(target); after.setDate(target.getDate() - 1);
+  const before   = new Date(target); before.setDate(target.getDate() + 1);
+  const afterTs  = Math.floor(after.getTime() / 1000);
+  const beforeTs = Math.floor(before.getTime() / 1000);
+  const res = await gmail.users.messages.list({
     userId: 'me',
-    id: messages[0].id!,
-    format: 'full',
+    q: `from:customreports@greylabs.ai after:${afterTs} before:${beforeTs}`,
+    maxResults: 5,
   });
-
+  const messages = res.data.messages;
+  if (!messages?.length) { console.log(`GreyLabs email not found for ${dateStr}`); return null; }
+  const msg = await gmail.users.messages.get({ userId: 'me', id: messages[0].id!, format: 'full' });
   const body = getEmailBody(msg.data.payload);
-  if (!body) { console.log('Could not extract email body'); return null; }
+  if (!body) return null;
+  const funnelData = parseEmailBody(body);
+  if (!funnelData) return null;
 
-  const parsed = parseFreshFunnel(body);
-  if (!parsed) return null;
-
-  console.log(`GreyLabs parsed for ${dateStr}:`, parsed);
-  return parsed;
+  let freshIds: string[] = [];
+  let retainedIds: string[] = [];
+  const parts = msg.data.payload?.parts || [];
+  const attachment = findXlsxAttachment(parts);
+  if (attachment) {
+    try {
+      const ids = await extractLeadIds(gmail, messages[0].id!, attachment.attachmentId);
+      freshIds = ids.freshIds;
+      retainedIds = ids.retainedIds;
+    } catch (e: any) { console.log('Could not extract Lead IDs:', e.message); }
+  }
+  return { ...funnelData, freshIds, retainedIds };
 }
