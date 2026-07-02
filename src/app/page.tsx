@@ -6,7 +6,7 @@ import type { FunnelRow } from '@/lib/storage';
 import { cdrQuery, conversionQuery } from '@/lib/superset-queries';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
-const SUPERSET_LOGIN = 'https://insurance-analytic-platform.paytminsurance.co.in/sqllab/';
+const SUPERSET_LOGIN = 'https://insurance-analytic-platform.paytminsurance.co.in/superset/welcome/';
 
 function todayStr() { return new Date().toISOString().slice(0,10); }
 function yesterdayStr() { const d=new Date(); d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); }
@@ -540,7 +540,7 @@ export default function Dashboard(){
             <button style={{...btnP,width:'100%',background:C.greenM}} onClick={syncSuperset} disabled={ssLoading}>
               {ssLoading?'Checking access…':ssAuthUrl?'Continue sync':'Sync from Superset'}
             </button>
-            {ssAuthUrl&&<a href={ssAuthUrl} target="_blank" rel="noreferrer" style={{display:'block',textAlign:'center',marginTop:8,fontSize:12,color:C.blue}}>Open Superset sign-in again →</a>}
+            {ssAuthUrl&&<a href={SUPERSET_LOGIN} target="_blank" rel="noreferrer" style={{display:'block',textAlign:'center',marginTop:8,fontSize:12,color:C.blue}}>Open Superset →</a>}
             {ssStatus&&<div style={{marginTop:10,fontSize:12,color:ssStatus.startsWith('✓')?C.green:ssAuthUrl?C.amber:C.red,padding:'8px 10px',background:ssStatus.startsWith('✓')?C.greenL:ssAuthUrl?C.amberL:C.redL,borderRadius:6}}>{ssStatus}</div>}
             <hr style={{border:'none',borderTop:`1px dashed ${C.border}`,margin:'14px 0'}}/>
             <p style={{fontSize:11,color:C.text3}}>
