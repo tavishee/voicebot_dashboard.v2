@@ -15,16 +15,28 @@ function fmtPct(v:number){return Math.round(v*1000)/10+'%';}
 function weekStart(n=0){const d=new Date();const dow=d.getDay()||7;d.setDate(d.getDate()-dow+1-n*7);return d.toISOString().slice(0,10);}
 function sumRows(rows:FunnelRow[]){
   const n=(k:keyof FunnelRow)=>rows.reduce((s,r)=>s+(Number(r[k])||0),0);
-  return{bs:n('bot_sent'),bd:n('bot_dialled'),bc:n('bot_connected'),bq:n('bot_qualified'),
+  return{
+    // fresh
+    fs:n('fresh_sent'),fd:n('fresh_dialled'),fc:n('fresh_connected'),fq:n('fresh_qualified'),
+    fhi:n('fresh_high'),fmi:n('fresh_medium'),flo:n('fresh_low'),fcb:n('fresh_callback'),
+    // retained
+    rs:n('ret_sent'),rd:n('ret_dialled'),rc:n('ret_connected'),rq:n('ret_qualified'),
+    rhi:n('ret_high'),rmi:n('ret_medium'),rlo:n('ret_low'),rcb:n('ret_callback'),
+    // combined bot
+    bs:n('bot_sent'),bq:n('bot_qualified'),
+    bd:n('bot_dialled'),bc:n('bot_connected'),
     hi:n('high_intent'),mi:n('medium_intent'),li:n('low_intent'),
+    // cc
     cs:n('cc_sent'),ca:n('cc_attempted'),cc:n('cc_connected'),cv:n('cc_converted'),
-    churn:n('cc_churn'),coc:n('cc_conversion_on_connect')};
+    churn:n('cc_churn'),coc:n('cc_conversion_on_connect')
+  };
 }
 
 const C={
   blue:'#185FA5',blueM:'#378ADD',blueL:'#E6F1FB',
   green:'#27500A',greenM:'#639922',greenL:'#EAF3DE',
   amber:'#854F0B',amberL:'#FAEEDA',
+  purple:'#5B21B6',purpleM:'#7C3AED',purpleL:'#EDE9FE',
   red:'#A32D2D',redL:'#FCEBEB',
   text:'#1a1a18',text2:'#6b6b67',text3:'#9b9b96',
   border:'#e2e1db',borderL:'#eeede8',bg:'#f5f5f3',surface:'#fff',
@@ -113,8 +125,14 @@ export default function Dashboard(){
       if(extensionReady){
         const next=new Date(`${ssDate}T00:00:00Z`);next.setUTCDate(next.getUTCDate()+1);
         const nextDate=next.toISOString().slice(0,10);
-        setSsStatus('Running combined calls and conversion query in Superset…');
-        const rows=await extensionCall('RUN_QUERY',{sql:combinedQuery(ssDate,nextDate)});
+        setSsStatus('Fetching qualified lead IDs…');
+        // Get lead IDs from Redis for this date
+        const lidRes=await fetch(`/api/lead-ids?date=${ssDate}`);
+        const lidData=await lidRes.json();
+        const allIds:string[]=lidData.allIds||[];
+        if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill first.`);setSsLoading(false);return;}
+        setSsStatus(`Running Superset query for ${allIds.length} lead IDs…`);
+        const rows=await extensionCall('RUN_QUERY',{sql:combinedQuery(ssDate,nextDate,allIds)});
         const c={cc_sent:Number(rows?.[0]?.cc_sent)||0,cc_attempted:Number(rows?.[0]?.cc_attempted)||0,cc_connected:Number(rows?.[0]?.cc_connected)||0,cc_converted:Number(rows?.[0]?.cc_converted)||0};
         const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_churn:0,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
@@ -220,214 +238,161 @@ export default function Dashboard(){
 
         {/* FUNNEL */}
         {tab==='funnel'&&<>
-          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap' as const}}>
             <span style={{fontSize:12,color:C.text2}}>View</span>
             <select style={inp} value={fMode} onChange={e=>setFMode(e.target.value as any)}>
-              <option value="day">Single day</option><option value="range">Date range</option>
+              <option value="day">Single day</option><option value="range">Date range (day on day)</option>
             </select>
             {fMode==='day'&&<input style={inp} type="date" value={fDay} onChange={e=>setFDay(e.target.value)}/>}
             {fMode==='range'&&<><input style={inp} type="date" value={fFrom} onChange={e=>setFFrom(e.target.value)}/><span style={{fontSize:12,color:C.text3}}>to</span><input style={inp} type="date" value={fTo} onChange={e=>setFTo(e.target.value)}/></>}
           </div>
-          {/* KPIs */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:10,marginBottom:16}}>
             {[
-              {l:'Bot connect rate',v:pct(fs.bc,fs.bd)+'%',s:`${fs.bc.toLocaleString()} / ${fs.bd.toLocaleString()}`},
-              {l:'Bot qualify rate',v:pct(fs.bq,fs.bc)+'%',s:`${fs.bq.toLocaleString()} qualified`},
+              {l:'Fresh qualify %',v:pct(fs.fq,fs.fc)+'%',s:`${fs.fq.toLocaleString()} qualified`},
+              {l:'Retained qualify %',v:pct(fs.rq,fs.rc)+'%',s:`${fs.rq.toLocaleString()} qualified`},
               {l:'CC convert rate',v:pct(fs.cv,fs.cc)+'%',s:`${fs.cv.toLocaleString()} / ${fs.cc.toLocaleString()}`},
-              {l:'Conv on connect',v:fmtPct(fRows.length?fRows.reduce((s,r)=>s+(r.cc_conversion_on_connect||0),0)/fRows.length:0),s:'avg across period'},
+              {l:'Conv on connect',v:fmtPct(fRows.length?fRows.reduce((s,r)=>s+(r.cc_conversion_on_connect||0),0)/fRows.length:0),s:'avg'},
               {l:'End-to-end',v:pct(fs.cv,fs.bs)+'%',s:`${fs.cv.toLocaleString()} from ${fs.bs.toLocaleString()}`},
             ].map(k=>(
               <div key={k.l} style={kpi}>
-                <div style={{fontSize:10,color:C.text3,textTransform:'uppercase',letterSpacing:'.05em',marginBottom:5}}>{k.l}</div>
+                <div style={{fontSize:10,color:C.text3,textTransform:'uppercase' as const,letterSpacing:'.05em',marginBottom:5}}>{k.l}</div>
                 <div style={{fontSize:22,fontWeight:500,lineHeight:1}}>{k.v}</div>
                 <div style={{fontSize:11,color:C.text3,marginTop:3}}>{k.s}</div>
               </div>
             ))}
           </div>
-          {/* Full funnel */}
-          <div style={card}>
-            {!rows.length
-              ? <div style={{textAlign:'center',padding:40,color:C.text3}}>No data yet — add data via the "+ Data" tab</div>
-              : fMode==='range'
-                ? <>
-                    {/* DATE RANGE — day-on-day table */}
-                    <div style={{overflowX:'auto'}}>
-                      <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-                        <thead>
-                          <tr style={{borderBottom:`2px solid ${C.border}`}}>
-                            <th style={{textAlign:'left',padding:'8px 10px',fontWeight:600,color:C.text2,minWidth:140,position:'sticky',left:0,background:C.surface}}>Stage</th>
-                            {fRows.map(r=>(
-                              <th key={r.date} style={{textAlign:'right',padding:'8px 10px',fontWeight:500,color:C.text2,whiteSpace:'nowrap'}}>{r.date.slice(5)}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {/* Bot rows */}
-                          {[
-                            {l:'Leads sent',      k:'bot_sent',      color:C.blueL,  badge:'bot'},
-                            {l:'Leads dialled',   k:'bot_dialled',   color:'',       badge:''},
-                            {l:'Leads connected', k:'bot_connected', color:'',       badge:''},
-                            {l:'Leads qualified', k:'bot_qualified', color:'',       badge:''},
-                            {l:'High intent',     k:'high_intent',   color:'',       badge:''},
-                            {l:'Medium intent',   k:'medium_intent', color:'',       badge:''},
-                          ].map((row,ri)=>(
-                            <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`,background:ri===0?C.blueL+'44':''}}>
-                              <td style={{padding:'7px 10px',fontWeight:ri===0?600:400,color:ri===0?C.blue:C.text,position:'sticky',left:0,background:ri===0?C.blueL+'44':C.surface}}>
-                                {ri===0&&<span style={{...{display:'inline-block',padding:'1px 6px',borderRadius:20,fontSize:9,fontWeight:700,background:C.blueL,color:C.blue,marginRight:6}}}>BOT</span>}
-                                {row.l}
-                              </td>
-                              {fRows.map(r=>{
-                                const v=Number((r as any)[row.k])||0;
-                                const prev=ri>0?Number((r as any)[(['bot_sent','bot_dialled','bot_connected','bot_qualified','bot_qualified','bot_qualified'][ri-1] as any)])||0:0;
-                                return(
-                                  <td key={r.date} style={{padding:'7px 10px',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>
-                                    {v.toLocaleString()}
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                          {/* Connect & qualify rates */}
-                          {[
-                            {l:'Connect rate',k:'bot_connect_rate',isRate:true},
-                            {l:'Qualify rate',k:'bot_qualify_rate',isRate:true},
-                          ].map(row=>(
-                            <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`,background:C.bg}}>
-                              <td style={{padding:'7px 10px',color:C.text3,fontStyle:'italic',position:'sticky',left:0,background:C.bg}}>{row.l}</td>
-                              {fRows.map(r=>(
-                                <td key={r.date} style={{padding:'7px 10px',textAlign:'right',color:C.blue,fontVariantNumeric:'tabular-nums'}}>
-                                  {Math.round(Number((r as any)[row.k])*1000)/10}%
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                          {/* Gap row */}
-                          <tr style={{borderBottom:`2px solid ${C.amber}`,background:C.amberL+'66'}}>
-                            <td style={{padding:'7px 10px',fontWeight:600,color:C.amber,position:'sticky',left:0,background:C.amberL+'66'}}>↓ Gap (Qual → CC)</td>
-                            {fRows.map(r=>{
-                              const gap=(r.bot_qualified||0)-(r.cc_sent||0);
-                              return(
-                                <td key={r.date} style={{padding:'7px 10px',textAlign:'right',color:C.amber,fontWeight:500}}>
-                                  {r.cc_sent>0?gap.toLocaleString():'—'}
-                                </td>
-                              );
-                            })}
-                          </tr>
-                          {/* CC rows */}
-                          {[
-                            {l:'CC received',  k:'cc_sent',      isFirst:true},
-                            {l:'CC attempted', k:'cc_attempted', isFirst:false},
-                            {l:'CC connected', k:'cc_connected', isFirst:false},
-                            {l:'CC converted', k:'cc_converted', isFirst:false},
-                          ].map((row,ri)=>(
-                            <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`,background:ri===0?C.greenL+'44':''}}>
-                              <td style={{padding:'7px 10px',fontWeight:ri===0?600:400,color:ri===0?C.green:C.text,position:'sticky',left:0,background:ri===0?C.greenL+'44':C.surface}}>
-                                {ri===0&&<span style={{...{display:'inline-block',padding:'1px 6px',borderRadius:20,fontSize:9,fontWeight:700,background:C.greenL,color:C.green,marginRight:6}}}>CC</span>}
-                                {row.l}
-                              </td>
-                              {fRows.map(r=>(
-                                <td key={r.date} style={{padding:'7px 10px',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>
-                                  {r.cc_sent>0?(Number((r as any)[row.k])||0).toLocaleString():'—'}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                          {/* CC rates */}
-                          {[
-                            {l:'CC convert rate',    k:'cc_convert_rate'},
-                            {l:'Conv on connect %',  k:'cc_conversion_on_connect'},
-                            {l:'Churn',              k:'cc_churn', noRate:true},
-                            {l:'End-to-end %',       k:'e2e_rate'},
-                          ].map(row=>(
-                            <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`,background:C.bg}}>
-                              <td style={{padding:'7px 10px',color:C.text3,fontStyle:'italic',position:'sticky',left:0,background:C.bg}}>{row.l}</td>
-                              {fRows.map(r=>(
-                                <td key={r.date} style={{padding:'7px 10px',textAlign:'right',color:C.green,fontVariantNumeric:'tabular-nums'}}>
-                                  {r.cc_sent>0
-                                    ? (row as any).noRate
-                                      ? Number((r as any)[row.k]).toFixed(1)
-                                      : Math.round(Number((r as any)[row.k])*10000)/100+'%'
-                                    : '—'
-                                  }
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+          {!rows.length&&<div style={{...card,textAlign:'center' as const,padding:40,color:C.text3}}>No data yet — add data via the "+ Data" tab</div>}
+          {rows.length>0&&fMode==='day'&&<>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+              <div style={card}>
+                <div style={cardT}><span style={bBot}>Fresh</span> Lead Funnel</div>
+                {([{name:'Leads sent',k:'fresh_sent'},{name:'Leads dialled',k:'fresh_dialled'},{name:'Leads connected',k:'fresh_connected'},{name:'Leads qualified',k:'fresh_qualified'}] as {name:string,k:keyof typeof fRows[0]}[]).map((st,i,arr)=>{
+                  const val=fRows[0]?Number(fRows[0][st.k])||0:0;
+                  const top=fRows[0]?Number(fRows[0].fresh_sent)||1:1;
+                  const prev=i>0?Number(fRows[0]?.[arr[i-1].k as keyof typeof fRows[0]])||0:0;
+                  return(<div key={st.name} style={{marginBottom:10}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}><span style={{fontSize:12,fontWeight:500}}>{st.name}</span><span style={{fontSize:13,fontWeight:500}}>{val.toLocaleString()}</span></div>
+                    <div style={{height:6,background:C.borderL,borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',borderRadius:3,background:C.blueM,width:`${Math.max(4,Math.round(val/top*100))}%`,transition:'width .5s'}}/></div>
+                    <div style={{fontSize:11,color:C.text3,marginTop:2,textAlign:'right' as const}}>{i>0&&`Step: ${pct(val,prev)}% · Top: ${pct(val,top)}%`}</div>
+                  </div>);
+                })}
+                <div style={{display:'flex',gap:6,marginTop:10}}>
+                  {[{l:'High',k:'fresh_high',c:C.blue},{l:'Med',k:'fresh_medium',c:C.blueM},{l:'Low',k:'fresh_low',c:C.text3},{l:'Callback',k:'fresh_callback',c:'#7C3AED'}].map(x=>(
+                    <div key={x.l} style={{flex:1,background:C.bg,borderRadius:6,padding:'6px 4px',textAlign:'center' as const}}>
+                      <div style={{fontSize:10,color:C.text3}}>{x.l}</div>
+                      <div style={{fontSize:13,fontWeight:500,color:x.c}}>{fRows[0]?Number((fRows[0] as any)[x.k])||0:0}</div>
                     </div>
-                  </>
-                : <>
-                    {/* SINGLE DAY — funnel bars */}
-                    <div style={cardT}><span style={bBot}>Voicebot</span> Fresh Lead Funnel</div>
-                    {[
-                      {name:'Leads sent',val:fs.bs},{name:'Leads dialled',val:fs.bd},
-                      {name:'Leads connected',val:fs.bc},{name:'Leads qualified',val:fs.bq},
-                    ].map((st,i,arr)=>(
-                      <div key={st.name} style={{marginBottom:10}}>
-                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
-                          <span style={{fontSize:12,fontWeight:500}}>{st.name}</span>
-                          <span style={{fontSize:13,fontWeight:500}}>{st.val.toLocaleString()}</span>
-                        </div>
-                        <div style={{height:6,background:C.borderL,borderRadius:3,overflow:'hidden'}}>
-                          <div style={{height:'100%',borderRadius:3,background:C.blueM,width:`${Math.max(4,Math.round(st.val/(fs.bs||1)*100))}%`,transition:'width .5s ease'}}/>
-                        </div>
-                        <div style={{fontSize:11,color:C.text3,marginTop:2,textAlign:'right'}}>
-                          {i>0&&`Step: ${pct(st.val,arr[i-1].val)}% · Top: ${pct(st.val,fs.bs)}%`}
-                        </div>
-                      </div>
-                    ))}
-                    <div style={{display:'flex',gap:8,marginTop:10,marginBottom:4}}>
-                      {[{l:'High intent',v:fs.hi,c:C.blue},{l:'Medium intent',v:fs.mi,c:C.blueM},{l:'Low intent',v:fs.li,c:C.text3}].map(x=>(
-                        <div key={x.l} style={{flex:1,background:C.bg,borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
-                          <div style={{fontSize:10,color:C.text3,textTransform:'uppercase',letterSpacing:'.04em'}}>{x.l}</div>
-                          <div style={{fontSize:15,fontWeight:500,color:x.c}}>{x.v.toLocaleString()}</div>
-                        </div>
-                      ))}
+                  ))}
+                </div>
+              </div>
+              <div style={card}>
+                <div style={cardT}><span style={{display:'inline-block',padding:'2px 8px',borderRadius:20,fontSize:10,fontWeight:600,background:'#EDE9FE',color:'#5B21B6'}}>Retained</span> Lead Funnel</div>
+                {([{name:'Leads sent',k:'ret_sent'},{name:'Leads dialled',k:'ret_dialled'},{name:'Leads connected',k:'ret_connected'},{name:'Leads qualified',k:'ret_qualified'}] as {name:string,k:keyof typeof fRows[0]}[]).map((st,i,arr)=>{
+                  const val=fRows[0]?Number(fRows[0][st.k])||0:0;
+                  const top=fRows[0]?Number(fRows[0].ret_sent)||1:1;
+                  const prev=i>0?Number(fRows[0]?.[arr[i-1].k as keyof typeof fRows[0]])||0:0;
+                  return(<div key={st.name} style={{marginBottom:10}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}><span style={{fontSize:12,fontWeight:500}}>{st.name}</span><span style={{fontSize:13,fontWeight:500}}>{val.toLocaleString()}</span></div>
+                    <div style={{height:6,background:C.borderL,borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',borderRadius:3,background:'#7C3AED',width:`${Math.max(4,Math.round(val/top*100))}%`,transition:'width .5s'}}/></div>
+                    <div style={{fontSize:11,color:C.text3,marginTop:2,textAlign:'right' as const}}>{i>0&&`Step: ${pct(val,prev)}% · Top: ${pct(val,top)}%`}</div>
+                  </div>);
+                })}
+                <div style={{display:'flex',gap:6,marginTop:10}}>
+                  {[{l:'High',k:'ret_high',c:'#5B21B6'},{l:'Med',k:'ret_medium',c:'#7C3AED'},{l:'Low',k:'ret_low',c:C.text3},{l:'Callback',k:'ret_callback',c:'#7C3AED'}].map(x=>(
+                    <div key={x.l} style={{flex:1,background:C.bg,borderRadius:6,padding:'6px 4px',textAlign:'center' as const}}>
+                      <div style={{fontSize:10,color:C.text3}}>{x.l}</div>
+                      <div style={{fontSize:13,fontWeight:500,color:x.c}}>{fRows[0]?Number((fRows[0] as any)[x.k])||0:0}</div>
                     </div>
-                    {fs.cs>0&&(
-                      <div style={{background:C.amberL,border:`1px solid #F5D9A8`,borderRadius:8,padding:'10px 14px',margin:'14px 0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                        <span style={{fontSize:12,color:C.amber,fontWeight:500}}>Gap — Qualified → CC Received</span>
-                        <span style={{fontSize:13,color:C.amber,fontWeight:600}}>{(fs.bq-fs.cs).toLocaleString()} leads ({pct(fs.bq-fs.cs,fs.bq)}% of qualified)</span>
-                      </div>
-                    )}
-                    <hr style={{border:'none',borderTop:`1px dashed ${C.border}`,margin:'14px 0'}}/>
-                    <div style={cardT}><span style={bCC}>Call Centre</span> Enser Funnel</div>
-                    {fs.cs===0
-                      ?<div style={{textAlign:'center',padding:'16px 0',color:C.text3,fontSize:13}}>No Enser data — upload via "+ Data" tab</div>
-                      :<>
-                        {[{name:'Leads received',val:fs.cs},{name:'Attempted',val:fs.ca},{name:'Connected',val:fs.cc},{name:'Converted',val:fs.cv}].map((st,i,arr)=>(
-                          <div key={st.name} style={{marginBottom:10}}>
-                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
-                              <span style={{fontSize:12,fontWeight:500}}>{st.name}</span>
-                              <span style={{fontSize:13,fontWeight:500}}>{st.val.toLocaleString()}</span>
-                            </div>
-                            <div style={{height:6,background:C.borderL,borderRadius:3,overflow:'hidden'}}>
-                              <div style={{height:'100%',borderRadius:3,background:C.greenM,width:`${Math.max(4,Math.round(st.val/(fs.cs||1)*100))}%`,transition:'width .5s ease'}}/>
-                            </div>
-                            <div style={{fontSize:11,color:C.text3,marginTop:2,textAlign:'right'}}>
-                              {i>0&&`Step: ${pct(st.val,arr[i-1].val)}% · Top: ${pct(st.val,fs.cs)}%`}
-                            </div>
-                          </div>
-                        ))}
-                        <div style={{display:'flex',gap:8,marginTop:10}}>
-                          <div style={{flex:1,background:C.bg,borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
-                            <div style={{fontSize:10,color:C.text3,textTransform:'uppercase',letterSpacing:'.04em'}}>Churn</div>
-                            <div style={{fontSize:15,fontWeight:500,color:C.red}}>{(fRows.length?fRows.reduce((s,r)=>s+(r.cc_churn||0),0)/fRows.length:0).toFixed(1)}</div>
-                          </div>
-                          <div style={{flex:2,background:C.bg,borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
-                            <div style={{fontSize:10,color:C.text3,textTransform:'uppercase',letterSpacing:'.04em'}}>Conv on connect %</div>
-                            <div style={{fontSize:15,fontWeight:500,color:C.green}}>{fmtPct(fRows.length?fRows.reduce((s,r)=>s+(r.cc_conversion_on_connect||0),0)/fRows.length:0)}</div>
-                          </div>
-                        </div>
-                      </>
-                    }
-                  </>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={card}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+                <div style={{fontSize:13,color:C.text2}}>Combined qualified: <strong style={{color:C.text,fontSize:15}}>{((fRows[0]?.fresh_qualified||0)+(fRows[0]?.ret_qualified||0)).toLocaleString()}</strong><span style={{fontSize:11,color:C.text3,marginLeft:8}}>({fRows[0]?.fresh_qualified||0} fresh + {fRows[0]?.ret_qualified||0} retained)</span></div>
+                {(fRows[0]?.cc_sent||0)>0&&<div style={{background:C.amberL,color:C.amber,padding:'4px 12px',borderRadius:6,fontSize:12,fontWeight:500}}>Gap: {((fRows[0]?.bot_qualified||0)-(fRows[0]?.cc_sent||0)).toLocaleString()} leads</div>}
+              </div>
+              <div style={cardT}><span style={bCC}>Call Centre</span> Enser Funnel (bot-qualified leads only)</div>
+              {(fRows[0]?.cc_sent||0)===0
+                ?<div style={{textAlign:'center' as const,padding:'16px 0',color:C.text3,fontSize:13}}>No Enser data — sync from Superset in "+ Data" tab</div>
+                :<>
+                  {[{name:'Leads received',val:fRows[0]?.cc_sent||0},{name:'Attempted',val:fRows[0]?.cc_attempted||0},{name:'Connected',val:fRows[0]?.cc_connected||0},{name:'Converted',val:fRows[0]?.cc_converted||0}].map((st,i,arr)=>(
+                    <div key={st.name} style={{marginBottom:10}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}><span style={{fontSize:12,fontWeight:500}}>{st.name}</span><span style={{fontSize:13,fontWeight:500}}>{st.val.toLocaleString()}</span></div>
+                      <div style={{height:6,background:C.borderL,borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',borderRadius:3,background:C.greenM,width:`${Math.max(4,Math.round(st.val/((fRows[0]?.cc_sent||1))*100))}%`,transition:'width .5s'}}/></div>
+                      <div style={{fontSize:11,color:C.text3,marginTop:2,textAlign:'right' as const}}>{i>0&&`Step: ${pct(st.val,arr[i-1].val)}% · Top: ${pct(st.val,fRows[0]?.cc_sent||1)}%`}</div>
+                    </div>
+                  ))}
+                  <div style={{display:'flex',gap:8,marginTop:10}}>
+                    <div style={{flex:1,background:C.bg,borderRadius:8,padding:'8px 10px',textAlign:'center' as const}}><div style={{fontSize:10,color:C.text3,textTransform:'uppercase' as const}}>Conv on connect</div><div style={{fontSize:15,fontWeight:500,color:C.green}}>{fmtPct(fRows[0]?.cc_conversion_on_connect||0)}</div></div>
+                    <div style={{flex:1,background:C.bg,borderRadius:8,padding:'8px 10px',textAlign:'center' as const}}><div style={{fontSize:10,color:C.text3,textTransform:'uppercase' as const}}>E2E convert</div><div style={{fontSize:15,fontWeight:500,color:C.green}}>{fmtPct(fRows[0]?.e2e_rate||0)}</div></div>
+                  </div>
+                </>
+              }
+            </div>
+          </>}
+          {rows.length>0&&fMode==='range'&&<div style={{...card,overflowX:'auto' as const}}>
+            {fRows.length===0
+              ?<div style={{textAlign:'center' as const,padding:40,color:C.text3}}>No data for this range</div>
+              :<table style={{width:'100%',borderCollapse:'collapse' as const,fontSize:12}}>
+                <thead><tr style={{borderBottom:`2px solid ${C.border}`}}>
+                  <th style={{textAlign:'left' as const,padding:'8px 10px',fontWeight:600,color:C.text2,minWidth:160,position:'sticky' as const,left:0,background:C.surface}}>Stage</th>
+                  {fRows.map(r=><th key={r.date} style={{textAlign:'right' as const,padding:'8px 10px',fontWeight:500,color:C.text2,whiteSpace:'nowrap' as const}}>{r.date.slice(5)}</th>)}
+                </tr></thead>
+                <tbody>
+                  <tr style={{background:'#BFDBFE44'}}><td colSpan={fRows.length+1} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:C.blue,position:'sticky' as const,left:0}}>Fresh Leads</td></tr>
+                  {[{l:'Leads sent',k:'fresh_sent'},{l:'Leads dialled',k:'fresh_dialled'},{l:'Leads connected',k:'fresh_connected'},{l:'Leads qualified',k:'fresh_qualified'},{l:'High intent',k:'fresh_high'},{l:'Medium intent',k:'fresh_medium'},{l:'Low intent',k:'fresh_low'},{l:'Callback w/ agent',k:'fresh_callback'}].map((row,ri)=>(
+                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`}}>
+                      <td style={{padding:'6px 10px',fontWeight:ri<4?500:400,color:C.text,position:'sticky' as const,left:0,background:C.surface}}>{row.l}</td>
+                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,fontVariantNumeric:'tabular-nums' as const}}>{(Number((r as any)[row.k])||0).toLocaleString()}</td>)}
+                    </tr>
+                  ))}
+                  {[{l:'Connect %',k:'fresh_connect_rate'},{l:'Qualify %',k:'fresh_qualify_rate'}].map(row=>(
+                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`,background:C.bg}}>
+                      <td style={{padding:'6px 10px',color:C.text3,fontStyle:'italic',position:'sticky' as const,left:0,background:C.bg}}>{row.l}</td>
+                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:C.blue}}>{Math.round(Number((r as any)[row.k])*1000)/10}%</td>)}
+                    </tr>
+                  ))}
+                  <tr style={{background:'#EDE9FE44'}}><td colSpan={fRows.length+1} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:'#5B21B6',position:'sticky' as const,left:0}}>Retained Leads</td></tr>
+                  {[{l:'Leads sent',k:'ret_sent'},{l:'Leads dialled',k:'ret_dialled'},{l:'Leads connected',k:'ret_connected'},{l:'Leads qualified',k:'ret_qualified'},{l:'High intent',k:'ret_high'},{l:'Medium intent',k:'ret_medium'},{l:'Low intent',k:'ret_low'},{l:'Callback w/ agent',k:'ret_callback'}].map((row,ri)=>(
+                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`}}>
+                      <td style={{padding:'6px 10px',fontWeight:ri<4?500:400,color:C.text,position:'sticky' as const,left:0,background:C.surface}}>{row.l}</td>
+                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,fontVariantNumeric:'tabular-nums' as const}}>{(Number((r as any)[row.k])||0).toLocaleString()}</td>)}
+                    </tr>
+                  ))}
+                  {[{l:'Connect %',k:'ret_connect_rate'},{l:'Qualify %',k:'ret_qualify_rate'}].map(row=>(
+                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`,background:C.bg}}>
+                      <td style={{padding:'6px 10px',color:C.text3,fontStyle:'italic',position:'sticky' as const,left:0,background:C.bg}}>{row.l}</td>
+                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:'#7C3AED'}}>{Math.round(Number((r as any)[row.k])*1000)/10}%</td>)}
+                    </tr>
+                  ))}
+                  <tr style={{background:C.amberL+'44'}}><td colSpan={fRows.length+1} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:C.amber,position:'sticky' as const,left:0}}>Combined Qualified → CC</td></tr>
+                  <tr style={{borderBottom:`1px solid ${C.borderL}`,background:C.amberL+'22'}}>
+                    <td style={{padding:'6px 10px',fontWeight:600,color:C.amber,position:'sticky' as const,left:0,background:C.amberL+'22'}}>Total qualified</td>
+                    {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:C.amber,fontWeight:600}}>{(r.bot_qualified||0).toLocaleString()}</td>)}
+                  </tr>
+                  <tr style={{borderBottom:`2px dashed ${C.amber}`}}>
+                    <td style={{padding:'6px 10px',color:C.amber,fontStyle:'italic',position:'sticky' as const,left:0,background:C.surface}}>Gap (qual → CC)</td>
+                    {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:C.amber}}>{r.cc_sent>0?((r.bot_qualified||0)-(r.cc_sent||0)).toLocaleString():'—'}</td>)}
+                  </tr>
+                  <tr style={{background:C.greenL+'44'}}><td colSpan={fRows.length+1} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:C.green,position:'sticky' as const,left:0}}>Call Centre (bot-qualified leads only)</td></tr>
+                  {[{l:'CC received',k:'cc_sent'},{l:'CC attempted',k:'cc_attempted'},{l:'CC connected',k:'cc_connected'},{l:'CC converted',k:'cc_converted'}].map((row,ri)=>(
+                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`}}>
+                      <td style={{padding:'6px 10px',fontWeight:ri===0?600:400,color:ri===0?C.green:C.text,position:'sticky' as const,left:0,background:C.surface}}>{row.l}</td>
+                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,fontVariantNumeric:'tabular-nums' as const}}>{r.cc_sent>0?(Number((r as any)[row.k])||0).toLocaleString():'—'}</td>)}
+                    </tr>
+                  ))}
+                  {[{l:'CC convert %',k:'cc_convert_rate'},{l:'Conv on connect %',k:'cc_conversion_on_connect'},{l:'End-to-end %',k:'e2e_rate'}].map(row=>(
+                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`,background:C.bg}}>
+                      <td style={{padding:'6px 10px',color:C.text3,fontStyle:'italic',position:'sticky' as const,left:0,background:C.bg}}>{row.l}</td>
+                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:C.green}}>{r.cc_sent>0?Math.round(Number((r as any)[row.k])*10000)/100+'%':'—'}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             }
-          </div>
+          </div>}
         </>}
-
-        {/* TRENDS */}
         {tab==='trends'&&<>
           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap'}}>
             <span style={{fontSize:12,color:C.text2}}>Metric</span>
