@@ -75,9 +75,54 @@ policy_purchases AS (
     HAVING DATE(MIN(oi.created_on)) >= '${date}'
        AND DATE(MIN(oi.created_on)) < '${nextDate}'
 ),
+purchase_call_history AS (
+    SELECT CAST(c.customer_id AS VARCHAR) AS customer_id,
+        c.agent, DATE(c.created_on) AS call_date,
+        SUM(
+            IFNULL(CAST(NULLIF(SPLIT_PART(c.talk_duration, ':', 1), '') AS INT), 0) * 3600 +
+            IFNULL(CAST(NULLIF(SPLIT_PART(c.talk_duration, ':', 2), '') AS INT), 0) * 60 +
+            IFNULL(CAST(NULLIF(SPLIT_PART(c.talk_duration, ':', 3), '') AS INT), 0)
+        ) AS daily_talk_seconds
+    FROM glue_catalog.recent_search_partition.enser_callback_data c
+    WHERE c.service IN ('Fresh_Car', 'Renewal_Car', 'four_wheeler')
+      AND c.customer_id NOT LIKE 'NA'
+      AND c.call_type IN ('Outbound', 'CallBack', 'Manual')
+      AND (c.source IS NULL OR c.source IN ('enser', 'reliable'))
+      AND c.date >= DATE_FORMAT(DATE_SUB(CAST('${nextDate}' AS DATE), INTERVAL 110 DAY), '%Y%m%d')
+      AND c.date < DATE_FORMAT(CAST('${nextDate}' AS DATE), '%Y%m%d')
+      AND c.created_on >= DATE_SUB(CAST('${nextDate}' AS DATE), INTERVAL 110 DAY)
+      AND c.created_on < CAST('${nextDate}' AS DATE)
+      AND LOWER(c.agent) NOT IN ('no agent')
+      AND CAST(c.customer_id AS VARCHAR) IN (SELECT DISTINCT customer_id FROM policy_purchases)
+    GROUP BY CAST(c.customer_id AS VARCHAR), c.agent, DATE(c.created_on)
+),
+purchase_attribution AS (
+    SELECT h.customer_id, h.agent, h.call_date,
+        p.proposal_id, p.oms_item_id, p.purchase_date,
+        SUM(CASE WHEN h.call_date <= p.purchase_date THEN h.daily_talk_seconds ELSE 0 END)
+            OVER (PARTITION BY h.customer_id, p.proposal_id) AS customer_talk_seconds,
+        SUM(CASE WHEN h.call_date <= p.purchase_date THEN h.daily_talk_seconds ELSE 0 END)
+            OVER (PARTITION BY h.customer_id, h.agent, p.proposal_id) AS agent_talk_seconds
+    FROM purchase_call_history h
+    JOIN policy_purchases p ON h.customer_id = p.customer_id
+),
+ranked_attribution AS (
+    SELECT a.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY a.customer_id, a.proposal_id, a.oms_item_id
+          ORDER BY CASE WHEN a.call_date <= a.purchase_date
+            AND DATEDIFF(a.purchase_date, a.call_date) BETWEEN 0 AND 45
+            THEN a.agent_talk_seconds ELSE NULL END DESC
+        ) AS agent_rank
+    FROM purchase_attribution a
+    WHERE a.customer_talk_seconds >= 30
+      AND a.call_date <= a.purchase_date
+      AND DATEDIFF(a.purchase_date, a.call_date) BETWEEN 0 AND 45
+),
 conversions AS (
     SELECT DISTINCT customer_id
-    FROM policy_purchases
+    FROM ranked_attribution
+    WHERE agent_rank = 1
 ),
 raw_calls AS (
     SELECT CAST(customer_id AS VARCHAR) AS customer_id,
