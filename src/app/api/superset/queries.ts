@@ -14,17 +14,6 @@ export function combinedQuery(date: string, nextDate: string, leadIds: string[])
 WITH qualified_leads AS (
     ${qualifiedLeadSources}
 ),
-received_leads AS (
-    SELECT COUNT(DISTINCT CAST(customer_id AS VARCHAR)) AS cc_sent
-    FROM glue_catalog.recent_search_partition.enser_callback_data
-    WHERE (source = 'enser' OR source IS NULL)
-      AND customer_id <> 'NA'
-      AND date >= DATE_FORMAT(DATE_SUB(CAST('${nextDate}' AS DATE), INTERVAL 110 DAY), '%Y%m%d')
-      AND date < DATE_FORMAT(CAST('${nextDate}' AS DATE), '%Y%m%d')
-      AND created_on >= DATE_SUB(CAST('${nextDate}' AS DATE), INTERVAL 110 DAY)
-      AND created_on < CAST('${nextDate}' AS DATE)
-      AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
-),
 proposal_dedup AS (
     SELECT proposal_id, vehicle_type, created_by, owned_by, coverage_type
     FROM (
@@ -149,7 +138,7 @@ raw_calls AS (
       AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
 )
 SELECT
-    COALESCE((SELECT cc_sent FROM received_leads), 0) AS cc_sent,
+    COUNT(DISTINCT r.customer_id) AS cc_sent,
     COUNT(DISTINCT CASE WHEN COALESCE(disposition1,'') <> ''
       OR COALESCE(disposition2,'') <> '' OR COALESCE(disposition3,'') <> ''
       THEN r.customer_id END) AS cc_attempted,
@@ -163,4 +152,29 @@ SELECT
     ROUND(COUNT(*) / NULLIF(COUNT(DISTINCT r.customer_id), 0), 1) AS cc_churn
 FROM raw_calls r
 LEFT JOIN conversions cv ON r.customer_id = cv.customer_id`;
+}
+
+export function receivedQuery(nextDate: string, leadIds: string[]) {
+  if (!leadIds.length) return `SELECT 0 AS cc_sent`;
+
+  const idChunks: string[][] = [];
+  for (let i = 0; i < leadIds.length; i += 1000) idChunks.push(leadIds.slice(i, i + 1000));
+  const qualifiedLeadSources = idChunks.map(chunk => {
+    const values = chunk.map(id => `('${id.replace(/'/g, "''")}')`).join(', ');
+    return `SELECT CAST(id AS VARCHAR) AS lead_id FROM (VALUES ${values}) AS t(id)`;
+  }).join('\n    UNION ALL\n    ');
+
+  return `
+WITH qualified_leads AS (
+    ${qualifiedLeadSources}
+)
+SELECT COUNT(DISTINCT CAST(customer_id AS VARCHAR)) AS cc_sent
+FROM glue_catalog.recent_search_partition.enser_callback_data
+WHERE (source = 'enser' OR source IS NULL)
+  AND customer_id <> 'NA'
+  AND date >= DATE_FORMAT(DATE_SUB(CAST('${nextDate}' AS DATE), INTERVAL 110 DAY), '%Y%m%d')
+  AND date < DATE_FORMAT(CAST('${nextDate}' AS DATE), '%Y%m%d')
+  AND created_on >= DATE_SUB(CAST('${nextDate}' AS DATE), INTERVAL 110 DAY)
+  AND created_on < CAST('${nextDate}' AS DATE)
+  AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)`;
 }
