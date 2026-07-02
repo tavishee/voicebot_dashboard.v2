@@ -134,8 +134,8 @@ export default function Dashboard(){
         setSsStatus(`Matching ${allIds.length} qualified leads and calculating CC conversions…`);
         const sql=combinedQuery(ssDate,nextDate,allIds);
         const rows=await extensionCall('RUN_QUERY',{sql});
-        const c={cc_sent:Number(rows?.[0]?.cc_sent)||0,cc_attempted:Number(rows?.[0]?.cc_attempted)||0,cc_connected:Number(rows?.[0]?.cc_connected)||0,cc_converted:Number(rows?.[0]?.cc_converted)||0};
-        const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_churn:0,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
+        const c={cc_sent:Number(rows?.[0]?.cc_sent)||0,cc_attempted:Number(rows?.[0]?.cc_attempted)||0,cc_connected:Number(rows?.[0]?.cc_connected)||0,cc_converted:Number(rows?.[0]?.cc_converted)||0,cc_churn:Number(rows?.[0]?.cc_churn)||0};
+        const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
         setSsAuthUrl('');setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);load();return;
       }
