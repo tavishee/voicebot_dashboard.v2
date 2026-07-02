@@ -1,5 +1,6 @@
 const SUPERSET_URL = 'https://insurance-analytic-platform.paytminsurance.co.in';
 const DATABASE_CANDIDATES = Array.from({ length: 30 }, (_, index) => index + 1);
+let resolvedDatabaseId = null;
 
 function validateQuery(sql) {
   const normalized = sql.trim();
@@ -16,7 +17,7 @@ async function runQueryInSupersetTab(sql) {
   const tab = tabs.find(candidate => candidate.id);
   if (!tab?.id) throw new Error('SUPERSET_TAB_REQUIRED');
   const results = await chrome.scripting.executeScript({
-    target: { tabId: tab.id }, world: 'MAIN', args: [sql, DATABASE_CANDIDATES, SUPERSET_URL],
+    target: { tabId: tab.id }, world: 'MAIN', args: [sql, resolvedDatabaseId ? [resolvedDatabaseId, ...DATABASE_CANDIDATES.filter(id => id !== resolvedDatabaseId)] : DATABASE_CANDIDATES, SUPERSET_URL],
     func: async (query, databaseCandidates, baseUrl) => {
       try {
         const sqlLabUrl = `${baseUrl}/sqllab/`;
@@ -26,11 +27,17 @@ async function runQueryInSupersetTab(sql) {
         const csrf = (await csrfResponse.json()).result;
         const failures = [];
         for (const databaseId of databaseCandidates) {
-          const queryResponse = await fetch(`${baseUrl}/api/v1/sqllab/execute/`, {
-            method: 'POST', credentials: 'include', referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRFToken': csrf },
-            body: JSON.stringify({ database_id: databaseId, sql: query, runAsync: false, select_as_cta: false, tmp_table_name: '', client_id: crypto.randomUUID() }),
-          });
+          let queryResponse;
+          try {
+            queryResponse = await fetch(`${baseUrl}/api/v1/sqllab/execute/`, {
+              method: 'POST', credentials: 'include', referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRFToken': csrf },
+              body: JSON.stringify({ database_id: databaseId, sql: query, runAsync: false, select_as_cta: false, tmp_table_name: '', client_id: crypto.randomUUID() }),
+            });
+          } catch (error) {
+            failures.push(`Database ${databaseId}: ${error instanceof Error ? error.message : String(error)}`);
+            continue;
+          }
           if (queryResponse.status === 401 || queryResponse.status === 403) return { error: 'SUPERSET_AUTH_REQUIRED' };
           const responseText = await queryResponse.text();
           if (!queryResponse.ok) {
@@ -42,7 +49,7 @@ async function runQueryInSupersetTab(sql) {
             failures.push(`Database ${databaseId}: ${String(payload.errors[0].message || 'Superset query failed').slice(-2500)}`);
             continue;
           }
-          return { data: payload.data || payload.result?.data || [] };
+          return { data: payload.data || payload.result?.data || [], databaseId };
         }
         return { error: `No Superset database could execute the StarRocks query. Last error: ${failures.at(-1) || 'none'}` };
       } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
@@ -51,6 +58,7 @@ async function runQueryInSupersetTab(sql) {
   const result = results[0]?.result;
   if (!result) throw new Error('Superset tab did not return a result');
   if (result.error) throw new Error(result.error);
+  if (result.databaseId) resolvedDatabaseId = result.databaseId;
   return result.data;
 }
 
