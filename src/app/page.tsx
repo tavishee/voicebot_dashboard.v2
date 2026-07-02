@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip } from 'chart.js';
 import type { FunnelRow } from '@/lib/storage';
-import { combinedQuery } from '@/lib/superset-queries';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
 const SUPERSET_LOGIN = 'https://insurance-analytic-platform.paytminsurance.co.in/superset/welcome/';
@@ -132,8 +131,10 @@ export default function Dashboard(){
         const allIds:string[]=lidData.allIds||[];
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill first.`);setSsLoading(false);return;}
         setSsStatus(`Running Superset query for ${allIds.length} lead IDs…`);
-        const rows=await extensionCall('RUN_QUERY',{sql:combinedQuery(ssDate,nextDate,allIds)});
-        const c={cc_sent:Number(rows?.[0]?.cc_sent)||0,cc_attempted:Number(rows?.[0]?.cc_attempted)||0,cc_connected:Number(rows?.[0]?.cc_connected)||0,cc_converted:Number(rows?.[0]?.cc_converted)||0};
+        const res2=await fetch('/api/superset/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate})});
+        const data2=await res2.json();
+        if(!res2.ok)throw new Error(data2.error||'Superset sync failed');
+        const rows=[data2.counts];        const c={cc_sent:Number(rows?.[0]?.cc_sent)||0,cc_attempted:Number(rows?.[0]?.cc_attempted)||0,cc_connected:Number(rows?.[0]?.cc_connected)||0,cc_converted:Number(rows?.[0]?.cc_converted)||0};
         const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_churn:0,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
         setSsAuthUrl('');setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);load();return;
