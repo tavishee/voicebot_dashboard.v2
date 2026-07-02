@@ -131,10 +131,24 @@ export default function Dashboard(){
         const lidData=await lidRes.json();
         const allIds:string[]=lidData.allIds||[];
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill first.`);setSsLoading(false);return;}
-        setSsStatus(`Running Superset query for ${allIds.length} lead IDs…`);
-        const idList=allIds.map((id:string)=>`'${id.replace(/'/g,"''")}'`).join(',');
-        const sql=`SELECT COUNT(*) AS cc_sent,SUM(CASE WHEN COALESCE(disposition1,'')<>'' OR COALESCE(disposition2,'')<>'' OR COALESCE(disposition3,'')<>'' THEN 1 ELSE 0 END) AS cc_attempted,SUM(CASE WHEN IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration,':',1),'') AS INT),0)*3600+IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration,':',2),'') AS INT),0)*60+IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration,':',3),'') AS INT),0)>0 THEN 1 ELSE 0 END) AS cc_connected,0 AS cc_converted FROM glue_catalog.recent_search_partition.enser_callback_data WHERE (source='enser' OR source IS NULL) AND customer_id<>'NA' AND date>=DATE_FORMAT(CAST('${ssDate}' AS DATE),'%Y%m%d') AND date<DATE_FORMAT(CAST('${nextDate}' AS DATE),'%Y%m%d') AND created_on>='${ssDate} 00:00:00' AND created_on<'${nextDate} 00:00:00' AND CAST(customer_id AS VARCHAR) IN (${idList})`;
-        const rows=await extensionCall('RUN_QUERY',{sql});
+        setSsStatus(`Fetching CC data from Superset…`);
+        // Fetch ALL CC records for the day — no ID filter needed
+        // Then filter client-side against our lead IDs
+        const sql=`SELECT CAST(customer_id AS VARCHAR) AS customer_id,disposition1,disposition2,disposition3,talk_duration FROM glue_catalog.recent_search_partition.enser_callback_data WHERE (source='enser' OR source IS NULL) AND customer_id<>'NA' AND date>=DATE_FORMAT(CAST('${ssDate}' AS DATE),'%Y%m%d') AND date<DATE_FORMAT(CAST('${nextDate}' AS DATE),'%Y%m%d') AND created_on>='${ssDate} 00:00:00' AND created_on<'${nextDate} 00:00:00'`;
+        const allCcRows=await extensionCall('RUN_QUERY',{sql});
+        // Filter to only our bot-qualified lead IDs
+        const idSet=new Set(allIds.map((id:string)=>String(id).trim()));
+        const filtered=allCcRows.filter((r:any)=>idSet.has(String(r.customer_id||'').trim()));
+        setSsStatus(`Filtering ${filtered.length} matching leads from ${allCcRows.length} CC records…`);
+        const cc_sent=filtered.length;
+        const cc_attempted=filtered.filter((r:any)=>
+          (r.disposition1||'')!==''||(r.disposition2||'')!==''||(r.disposition3||'')!==''
+        ).length;
+        const cc_connected=filtered.filter((r:any)=>{
+          const t=String(r.talk_duration||'0:0:0').split(':');
+          return (parseInt(t[0]||'0')*3600+parseInt(t[1]||'0')*60+parseInt(t[2]||'0'))>0;
+        }).length;
+        const rows=[{cc_sent,cc_attempted,cc_connected,cc_converted:0}];
         const c={cc_sent:Number(rows?.[0]?.cc_sent)||0,cc_attempted:Number(rows?.[0]?.cc_attempted)||0,cc_connected:Number(rows?.[0]?.cc_connected)||0,cc_converted:Number(rows?.[0]?.cc_converted)||0};
         const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_churn:0,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
