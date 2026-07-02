@@ -4,7 +4,8 @@ const DATABASE_CANDIDATES = Array.from({ length: 30 }, (_, index) => index + 1);
 function validateQuery(sql) {
   const normalized = sql.trim();
   const forbidden = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|GRANT|REVOKE|CALL)\b/i;
-  if ((!/^WITH\b/i.test(normalized) && !/^SELECT\b/i.test(normalized)) || forbidden.test(normalized) || !normalized.includes('hive.recent_search.enser_callback_data_snapshot_v3')) {
+  if ((!/^WITH\b/i.test(normalized) && !/^SELECT\b/i.test(normalized)) || forbidden.test(normalized)
+      || (!normalized.includes('recent_search.enser_callback_data') && !normalized.includes('glue_catalog.recent_search_partition.enser_callback_data'))) {
     throw new Error('Query rejected by the Voicebot Superset Bridge allowlist');
   }
   return normalized;
