@@ -1,5 +1,5 @@
 const SUPERSET_URL = 'https://insurance-analytic-platform.paytminsurance.co.in';
-const DATABASE_CANDIDATES = Array.from({ length: 30 }, (_, index) => index + 1);
+const DATABASE_CANDIDATES = Array.from({ length: 200 }, (_, index) => index + 1);
 let resolvedDatabaseId = null;
 
 function validateQuery(sql) {
@@ -13,6 +13,10 @@ function validateQuery(sql) {
 }
 
 async function runQueryInSupersetTab(sql) {
+  if (!resolvedDatabaseId) {
+    const stored = await chrome.storage.local.get('supersetDatabaseId');
+    resolvedDatabaseId = Number(stored.supersetDatabaseId) || null;
+  }
   const tabs = await chrome.tabs.query({ url: `${SUPERSET_URL}/*` });
   const tab = tabs.find(candidate => candidate.id);
   if (!tab?.id) throw new Error('SUPERSET_TAB_REQUIRED');
@@ -27,33 +31,40 @@ async function runQueryInSupersetTab(sql) {
         const csrf = (await csrfResponse.json()).result;
         const failures = [];
         let selectedDatabaseId = null;
-        for (const databaseId of databaseCandidates) {
-          let queryResponse;
+        const databaseQueries = ['(columns:!(id,database_name),page:0,page_size:200)', '(page:0,page_size:200)'];
+        for (const databaseQuery of databaseQueries) {
           try {
-            queryResponse = await fetch(`${baseUrl}/api/v1/sqllab/execute/`, {
-              method: 'POST', credentials: 'include', referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin',
-              headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRFToken': csrf },
-              body: JSON.stringify({ database_id: databaseId, sql: 'SELECT 1 FROM glue_catalog.motor_proposal_3.proposal LIMIT 1', runAsync: false, select_as_cta: false, tmp_table_name: '', client_id: crypto.randomUUID() }),
+            const databaseResponse = await fetch(`${baseUrl}/api/v1/database/?q=${encodeURIComponent(databaseQuery)}`, {
+              credentials: 'include', headers: { Accept: 'application/json' }, referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin',
             });
+            if (!databaseResponse.ok) { failures.push(`Database API (${databaseResponse.status}): ${(await databaseResponse.text()).slice(-500)}`); continue; }
+            const databasePayload = await databaseResponse.json();
+            const databases = Array.isArray(databasePayload.result) ? databasePayload.result : [];
+            const match = databases.find(item => String(item.database_name || '').toLowerCase() === 'starrocks_glue_catalog') || databases.find(item => String(item.database_name || '').toLowerCase().includes('starrocks'));
+            if (match?.id) { selectedDatabaseId = Number(match.id); break; }
           } catch (error) {
-            failures.push(`Database ${databaseId}: ${error instanceof Error ? error.message : String(error)}`);
-            continue;
+            failures.push(`Database API: ${error instanceof Error ? error.message : String(error)}`);
           }
-          if (queryResponse.status === 401 || queryResponse.status === 403) return { error: 'SUPERSET_AUTH_REQUIRED' };
-          const responseText = await queryResponse.text();
-          if (!queryResponse.ok) {
-            failures.push(`Database ${databaseId} (${queryResponse.status}): ${responseText.slice(-2500)}`);
-            continue;
-          }
-          const payload = JSON.parse(responseText);
-          if (payload.errors?.length) {
-            failures.push(`Database ${databaseId}: ${String(payload.errors[0].message || 'Superset query failed').slice(-2500)}`);
-            continue;
-          }
-          selectedDatabaseId = databaseId;
-          break;
         }
-        if (!selectedDatabaseId) return { error: `StarRocks database was not found. Last probe error: ${failures.at(-1) || 'none'}` };
+        for (let offset = 0; !selectedDatabaseId && offset < databaseCandidates.length; offset += 10) {
+          const batch = databaseCandidates.slice(offset, offset + 10);
+          const probeResults = await Promise.all(batch.map(async databaseId => {
+            try {
+              const probeResponse = await fetch(`${baseUrl}/api/v1/sqllab/execute/`, {
+                method: 'POST', credentials: 'include', referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRFToken': csrf },
+                body: JSON.stringify({ database_id: databaseId, sql: 'SELECT 1 FROM glue_catalog.motor_proposal_3.proposal LIMIT 1', runAsync: false, select_as_cta: false, tmp_table_name: '', client_id: crypto.randomUUID() }),
+              });
+              if (!probeResponse.ok) return null;
+              const payload = await probeResponse.json();
+              return payload.errors?.length ? null : databaseId;
+            } catch { return null; }
+          }));
+          const match = probeResults.find(Boolean);
+          if (match) selectedDatabaseId = Number(match);
+          else failures.push(`No StarRocks match in IDs ${batch[0]}-${batch.at(-1)}`);
+        }
+        if (!selectedDatabaseId) return { error: `StarRocks database was not found through the Superset API or IDs 1-200. ${failures.at(-1) || ''}` };
         const queryResponse = await fetch(`${baseUrl}/api/v1/sqllab/execute/`, {
           method: 'POST', credentials: 'include', referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRFToken': csrf },
@@ -71,7 +82,10 @@ async function runQueryInSupersetTab(sql) {
   const result = results[0]?.result;
   if (!result) throw new Error('Superset tab did not return a result');
   if (result.error) throw new Error(result.error);
-  if (result.databaseId) resolvedDatabaseId = result.databaseId;
+  if (result.databaseId) {
+    resolvedDatabaseId = result.databaseId;
+    await chrome.storage.local.set({ supersetDatabaseId: result.databaseId });
+  }
   return result.data;
 }
 
