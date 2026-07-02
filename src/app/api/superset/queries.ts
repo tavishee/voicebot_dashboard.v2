@@ -14,6 +14,17 @@ export function combinedQuery(date: string, nextDate: string, leadIds: string[])
 WITH qualified_leads AS (
     ${qualifiedLeadSources}
 ),
+received_leads AS (
+    SELECT COUNT(DISTINCT CAST(customer_id AS VARCHAR)) AS cc_sent
+    FROM glue_catalog.recent_search_partition.enser_callback_data
+    WHERE (source = 'enser' OR source IS NULL)
+      AND customer_id <> 'NA'
+      AND date >= DATE_FORMAT(DATE_SUB(CAST('${nextDate}' AS DATE), INTERVAL 110 DAY), '%Y%m%d')
+      AND date < DATE_FORMAT(CAST('${nextDate}' AS DATE), '%Y%m%d')
+      AND created_on >= DATE_SUB(CAST('${nextDate}' AS DATE), INTERVAL 110 DAY)
+      AND created_on < CAST('${nextDate}' AS DATE)
+      AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
+),
 proposal_dedup AS (
     SELECT proposal_id, vehicle_type, created_by, owned_by, coverage_type
     FROM (
@@ -98,7 +109,7 @@ purchase_call_history AS (
 ),
 purchase_attribution AS (
     SELECT h.customer_id, h.agent, h.call_date,
-        p.proposal_id, p.oms_item_id, p.purchase_date,
+        p.proposal_id, p.oms_item_id, p.purchase_date, p.issued_flag,
         SUM(CASE WHEN h.call_date <= p.purchase_date THEN h.daily_talk_seconds ELSE 0 END)
             OVER (PARTITION BY h.customer_id, p.proposal_id) AS customer_talk_seconds,
         SUM(CASE WHEN h.call_date <= p.purchase_date THEN h.daily_talk_seconds ELSE 0 END)
@@ -123,10 +134,11 @@ conversions AS (
     SELECT DISTINCT customer_id
     FROM ranked_attribution
     WHERE agent_rank = 1
+      AND issued_flag = 1
 ),
 raw_calls AS (
     SELECT CAST(customer_id AS VARCHAR) AS customer_id,
-        disposition1, disposition2, disposition3, talk_duration
+        service, disposition1, disposition2, disposition3, talk_duration
     FROM glue_catalog.recent_search_partition.enser_callback_data
     WHERE (source = 'enser' OR source IS NULL)
       AND customer_id <> 'NA'
@@ -137,7 +149,7 @@ raw_calls AS (
       AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
 )
 SELECT
-    COUNT(DISTINCT r.customer_id) AS cc_sent,
+    COALESCE((SELECT cc_sent FROM received_leads), 0) AS cc_sent,
     COUNT(DISTINCT CASE WHEN COALESCE(disposition1,'') <> ''
       OR COALESCE(disposition2,'') <> '' OR COALESCE(disposition3,'') <> ''
       THEN r.customer_id END) AS cc_attempted,
@@ -146,7 +158,8 @@ SELECT
       IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration,':',2),'') AS INT),0)*60 +
       IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration,':',3),'') AS INT),0) > 0
       THEN r.customer_id END) AS cc_connected,
-    COUNT(DISTINCT CASE WHEN cv.customer_id IS NOT NULL THEN r.customer_id END) AS cc_converted,
+    COUNT(DISTINCT CASE WHEN cv.customer_id IS NOT NULL AND r.service = 'Fresh_Car'
+      THEN r.customer_id END) AS cc_converted,
     ROUND(COUNT(*) / NULLIF(COUNT(DISTINCT r.customer_id), 0), 1) AS cc_churn
 FROM raw_calls r
 LEFT JOIN conversions cv ON r.customer_id = cv.customer_id`;
