@@ -24,6 +24,7 @@ async function runQueryInSupersetTab(sql) {
         if (csrfResponse.status === 401 || csrfResponse.status === 403) return { error: 'SUPERSET_AUTH_REQUIRED' };
         if (!csrfResponse.ok) return { error: `CSRF request failed (${csrfResponse.status}): ${(await csrfResponse.text()).slice(0, 500)}` };
         const csrf = (await csrfResponse.json()).result;
+        const failures = [];
         for (const databaseId of databaseCandidates) {
           const queryResponse = await fetch(`${baseUrl}/api/v1/sqllab/execute/`, {
             method: 'POST', credentials: 'include', referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin',
@@ -32,13 +33,18 @@ async function runQueryInSupersetTab(sql) {
           });
           if (queryResponse.status === 401 || queryResponse.status === 403) return { error: 'SUPERSET_AUTH_REQUIRED' };
           const responseText = await queryResponse.text();
-          if (!queryResponse.ok && /database referenced in this query was not found/i.test(responseText)) continue;
-          if (!queryResponse.ok) return { error: `Query failed (${queryResponse.status}): ${responseText.slice(0, 1000)}` };
+          if (!queryResponse.ok) {
+            failures.push(`Database ${databaseId} (${queryResponse.status}): ${responseText.slice(-2500)}`);
+            continue;
+          }
           const payload = JSON.parse(responseText);
-          if (payload.errors?.length) return { error: payload.errors[0].message || 'Superset query failed' };
+          if (payload.errors?.length) {
+            failures.push(`Database ${databaseId}: ${String(payload.errors[0].message || 'Superset query failed').slice(-2500)}`);
+            continue;
+          }
           return { data: payload.data || payload.result?.data || [] };
         }
-        return { error: 'StarRocks database was not found in Superset database IDs 1–30' };
+        return { error: `No Superset database could execute the StarRocks query. Last error: ${failures.at(-1) || 'none'}` };
       } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
     },
   });
