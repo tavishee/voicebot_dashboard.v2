@@ -1,5 +1,5 @@
 const SUPERSET_URL = 'https://insurance-analytic-platform.paytminsurance.co.in';
-const DATABASE_NAME = 'StarRocks_glue_catalog';
+const DATABASE_CANDIDATES = Array.from({ length: 30 }, (_, index) => index + 1);
 
 function validateQuery(sql) {
   const normalized = sql.trim();
@@ -15,35 +15,29 @@ async function runQueryInSupersetTab(sql) {
   const tab = tabs.find(candidate => candidate.id);
   if (!tab?.id) throw new Error('SUPERSET_TAB_REQUIRED');
   const results = await chrome.scripting.executeScript({
-    target: { tabId: tab.id }, world: 'MAIN', args: [sql, DATABASE_NAME, SUPERSET_URL],
-    func: async (query, databaseName, baseUrl) => {
+    target: { tabId: tab.id }, world: 'MAIN', args: [sql, DATABASE_CANDIDATES, SUPERSET_URL],
+    func: async (query, databaseCandidates, baseUrl) => {
       try {
         const sqlLabUrl = `${baseUrl}/sqllab/`;
         const csrfResponse = await fetch(`${baseUrl}/api/v1/security/csrf_token/`, { credentials: 'include', headers: { Accept: 'application/json' }, referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin' });
         if (csrfResponse.status === 401 || csrfResponse.status === 403) return { error: 'SUPERSET_AUTH_REQUIRED' };
         if (!csrfResponse.ok) return { error: `CSRF request failed (${csrfResponse.status}): ${(await csrfResponse.text()).slice(0, 500)}` };
         const csrf = (await csrfResponse.json()).result;
-        const databasesResponse = await fetch(`${baseUrl}/api/v1/database/?q=${encodeURIComponent('(page:0,page_size:100)')}`, {
-          credentials: 'include', headers: { Accept: 'application/json' }, referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin',
-        });
-        if (!databasesResponse.ok) return { error: `Database lookup failed (${databasesResponse.status}): ${(await databasesResponse.text()).slice(0, 500)}` };
-        const databases = (await databasesResponse.json()).result || [];
-        const wantedName = databaseName.toLowerCase();
-        const database = databases.find(item => String(item.database_name || '').toLowerCase() === wantedName) || databases.find(item => String(item.database_name || '').toLowerCase().includes('starrocks'));
-        if (!database?.id) {
-          const available = databases.map(item => item.database_name).filter(Boolean).join(', ');
-          return { error: `Superset database ${databaseName} was not found. Available databases: ${available || 'none visible'}` };
+        for (const databaseId of databaseCandidates) {
+          const queryResponse = await fetch(`${baseUrl}/api/v1/sqllab/execute/`, {
+            method: 'POST', credentials: 'include', referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRFToken': csrf },
+            body: JSON.stringify({ database_id: databaseId, sql: query, runAsync: false, select_as_cta: false, tmp_table_name: '', client_id: crypto.randomUUID() }),
+          });
+          if (queryResponse.status === 401 || queryResponse.status === 403) return { error: 'SUPERSET_AUTH_REQUIRED' };
+          const responseText = await queryResponse.text();
+          if (!queryResponse.ok && /database referenced in this query was not found/i.test(responseText)) continue;
+          if (!queryResponse.ok) return { error: `Query failed (${queryResponse.status}): ${responseText.slice(0, 1000)}` };
+          const payload = JSON.parse(responseText);
+          if (payload.errors?.length) return { error: payload.errors[0].message || 'Superset query failed' };
+          return { data: payload.data || payload.result?.data || [] };
         }
-        const queryResponse = await fetch(`${baseUrl}/api/v1/sqllab/execute/`, {
-          method: 'POST', credentials: 'include', referrer: sqlLabUrl, referrerPolicy: 'strict-origin-when-cross-origin',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRFToken': csrf },
-          body: JSON.stringify({ database_id: database.id, sql: query, runAsync: false, select_as_cta: false, tmp_table_name: '', client_id: crypto.randomUUID() }),
-        });
-        if (queryResponse.status === 401 || queryResponse.status === 403) return { error: 'SUPERSET_AUTH_REQUIRED' };
-        if (!queryResponse.ok) return { error: `Query failed (${queryResponse.status}): ${(await queryResponse.text()).slice(0, 1000)}` };
-        const payload = await queryResponse.json();
-        if (payload.errors?.length) return { error: payload.errors[0].message || 'Superset query failed' };
-        return { data: payload.data || payload.result?.data || [] };
+        return { error: 'StarRocks database was not found in Superset database IDs 1–30' };
       } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
     },
   });
