@@ -9,7 +9,13 @@ import { resolve } from 'node:path';
 export const maxDuration = 60;
 
 async function saveLeadIds(date: string, freshIds: string[], retainedIds: string[]) {
-  const payload = JSON.stringify({ freshIds, retainedIds, allIds: [...freshIds, ...retainedIds] });
+  const cleanFresh = Array.from(new Set(freshIds.map(id => String(id).trim()).filter(Boolean)));
+  const cleanRetained = Array.from(new Set(retainedIds.map(id => String(id).trim()).filter(Boolean)));
+  const payload = JSON.stringify({
+    freshIds: cleanFresh,
+    retainedIds: cleanRetained,
+    allIds: Array.from(new Set([...cleanFresh, ...cleanRetained])),
+  });
   const url   = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (url && token) {

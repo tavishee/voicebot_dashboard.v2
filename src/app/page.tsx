@@ -127,16 +127,27 @@ export default function Dashboard(){
         const nextDate=next.toISOString().slice(0,10);
         setSsStatus('Fetching qualified lead IDs…');
         // Get lead IDs from Redis for this date
-        const lidRes=await fetch(`/api/lead-ids?date=${ssDate}`);
-        const lidData=await lidRes.json();
-        const allIds:string[]=lidData.allIds||[];
+        let lidRes=await fetch(`/api/lead-ids?date=${ssDate}`);
+        let lidData=await lidRes.json();
+        let allIds:string[]=Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean)));
+        const savedRow=rows.find(r=>r.date===ssDate);
+        const expectedQualified=(savedRow?.fresh_qualified||0)+(savedRow?.ret_qualified||0);
+        if(!allIds.length||(expectedQualified>0&&allIds.length!==expectedQualified)){
+          setSsStatus(`Refreshing the qualified Gmail cohort for ${ssDate}…`);
+          const refresh=await fetch(`/api/fetch-data?date=${ssDate}`);
+          const refreshData=await refresh.json();
+          if(!refresh.ok||refreshData.success===false)throw new Error(refreshData.error||refreshData.message||'Could not refresh Gmail lead IDs');
+          lidRes=await fetch(`/api/lead-ids?date=${ssDate}`);
+          lidData=await lidRes.json();
+          allIds=Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean))) as string[];
+        }
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill first.`);setSsLoading(false);return;}
         setSsStatus(`Matching ${allIds.length} qualified leads and calculating CC conversions…`);
         const sql=combinedQuery(ssDate,nextDate,allIds);
-        const rows=await extensionCall('RUN_QUERY',{sql});
+        const queryRows=await extensionCall('RUN_QUERY',{sql});
         setSsStatus('Calculating historical leads received…');
         const receivedRows=await extensionCall('RUN_QUERY',{sql:receivedQuery(nextDate,allIds)});
-        const c={cc_sent:Number(receivedRows?.[0]?.cc_sent)||Number(rows?.[0]?.cc_sent)||0,cc_attempted:Number(rows?.[0]?.cc_attempted)||0,cc_connected:Number(rows?.[0]?.cc_connected)||0,cc_converted:Number(rows?.[0]?.cc_converted)||0,cc_churn:Number(rows?.[0]?.cc_churn)||0};
+        const c={cc_sent:Number(receivedRows?.[0]?.cc_sent)||Number(queryRows?.[0]?.cc_sent)||0,cc_attempted:Number(queryRows?.[0]?.cc_attempted)||0,cc_connected:Number(queryRows?.[0]?.cc_connected)||0,cc_converted:Number(queryRows?.[0]?.cc_converted)||0,cc_churn:Number(queryRows?.[0]?.cc_churn)||0};
         const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
         setSsAuthUrl('');setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);load();return;
