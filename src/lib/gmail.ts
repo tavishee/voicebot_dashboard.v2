@@ -96,19 +96,32 @@ async function extractLeadIds(gmail: any, messageId: string, attachmentId: strin
     // Search first 10 rows for "Lead ID" header (it's in row 5, not row 1)
     let headerRowIdx = -1;
     let col = -1;
+    let qualifiedCol = -1;
     for (let i = 0; i < Math.min(rows.length, 10); i++) {
       const headers = rows[i].map((h: any) => String(h || '').trim().toLowerCase());
       const found2 = headers.findIndex(h => h === 'lead id' || h === 'lead_id' || h === 'leadid');
-      if (found2 !== -1) { headerRowIdx = i; col = found2; break; }
+      if (found2 !== -1) {
+        headerRowIdx = i;
+        col = found2;
+        qualifiedCol = headers.findIndex(h => h === 'qualified');
+        break;
+      }
     }
     if (col === -1) {
       console.log(`"Lead ID" column not found in first 10 rows of sheet "${found}"`);
       return [];
     }
 
-    return rows.slice(headerRowIdx + 1)
-      .map(r => String(r[col] || '').trim())
+    if (qualifiedCol === -1) {
+      console.log(`"Qualified" column not found in sheet "${found}"`);
+      return [];
+    }
+
+    const qualifiedIds = rows.slice(headerRowIdx + 1)
+      .filter(r => String(r[qualifiedCol] || '').trim().toUpperCase() === 'YES')
+      .map(r => String(r[col] ?? '').trim().replace(/\.0$/, ''))
       .filter(id => id && id !== 'undefined' && id !== 'null' && id !== 'None');
+    return Array.from(new Set(qualifiedIds));
   }
 
   const freshIds    = getIdsFromSheet('Fresh');

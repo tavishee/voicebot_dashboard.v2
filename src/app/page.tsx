@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip } from 'chart.js';
 import type { FunnelRow } from '@/lib/storage';
-import { combinedQuery } from '@/lib/superset-queries';
+import { combinedQuery } from '@/app/api/superset/queries';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
 const SUPERSET_LOGIN = 'https://insurance-analytic-platform.paytminsurance.co.in/superset/welcome/';
@@ -131,24 +131,9 @@ export default function Dashboard(){
         const lidData=await lidRes.json();
         const allIds:string[]=lidData.allIds||[];
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill first.`);setSsLoading(false);return;}
-        setSsStatus(`Fetching CC data from Superset…`);
-        // Fetch ALL CC records for the day — no ID filter needed
-        // Then filter client-side against our lead IDs
-        const sql=`SELECT CAST(customer_id AS VARCHAR) AS customer_id,disposition1,disposition2,disposition3,talk_duration FROM glue_catalog.recent_search_partition.enser_callback_data WHERE (source='enser' OR source IS NULL) AND customer_id<>'NA' AND date>=DATE_FORMAT(CAST('${ssDate}' AS DATE),'%Y%m%d') AND date<DATE_FORMAT(CAST('${nextDate}' AS DATE),'%Y%m%d') AND created_on>='${ssDate} 00:00:00' AND created_on<'${nextDate} 00:00:00'`;
-        const allCcRows=await extensionCall('RUN_QUERY',{sql});
-        // Filter to only our bot-qualified lead IDs
-        const idSet=new Set(allIds.map((id:string)=>String(id).trim()));
-        const filtered=allCcRows.filter((r:any)=>idSet.has(String(r.customer_id||'').trim()));
-        setSsStatus(`Filtering ${filtered.length} matching leads from ${allCcRows.length} CC records…`);
-        const cc_sent=filtered.length;
-        const cc_attempted=filtered.filter((r:any)=>
-          (r.disposition1||'')!==''||(r.disposition2||'')!==''||(r.disposition3||'')!==''
-        ).length;
-        const cc_connected=filtered.filter((r:any)=>{
-          const t=String(r.talk_duration||'0:0:0').split(':');
-          return (parseInt(t[0]||'0')*3600+parseInt(t[1]||'0')*60+parseInt(t[2]||'0'))>0;
-        }).length;
-        const rows=[{cc_sent,cc_attempted,cc_connected,cc_converted:0}];
+        setSsStatus(`Matching ${allIds.length} qualified leads and calculating CC conversions…`);
+        const sql=combinedQuery(ssDate,nextDate,allIds);
+        const rows=await extensionCall('RUN_QUERY',{sql});
         const c={cc_sent:Number(rows?.[0]?.cc_sent)||0,cc_attempted:Number(rows?.[0]?.cc_attempted)||0,cc_connected:Number(rows?.[0]?.cc_connected)||0,cc_converted:Number(rows?.[0]?.cc_converted)||0};
         const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_churn:0,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');

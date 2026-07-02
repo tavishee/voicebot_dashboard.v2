@@ -3,12 +3,16 @@ export function combinedQuery(date: string, nextDate: string, leadIds: string[])
     return `SELECT 0 AS cc_sent, 0 AS cc_attempted, 0 AS cc_connected, 0 AS cc_converted`;
   }
 
-  const idValues = leadIds.map(id => `('${id.replace(/'/g, "''")}')`).join(', ');
+  const idChunks: string[][] = [];
+  for (let i = 0; i < leadIds.length; i += 1000) idChunks.push(leadIds.slice(i, i + 1000));
+  const qualifiedLeadSources = idChunks.map(chunk => {
+    const values = chunk.map(id => `('${id.replace(/'/g, "''")}')`).join(', ');
+    return `SELECT CAST(id AS VARCHAR) AS lead_id FROM (VALUES ${values}) AS t(id)`;
+  }).join('\n    UNION ALL\n    ');
 
   return `
 WITH qualified_leads AS (
-    SELECT CAST(id AS VARCHAR) AS lead_id
-    FROM (VALUES ${idValues}) AS t(id)
+    ${qualifiedLeadSources}
 ),
 policy_purchases AS (
     SELECT p.vehicle_type AS product,
@@ -42,6 +46,8 @@ policy_purchases AS (
       AND CAST(COALESCE(p.created_by, p.owned_by) AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
     GROUP BY p.vehicle_type, oi.oms_item_id,
         CAST(COALESCE(p.created_by, p.owned_by) AS VARCHAR), p.proposal_id
+    HAVING DATE(MIN(oi.created_on)) >= '${date}'
+       AND DATE(MIN(oi.created_on)) < '${nextDate}'
 ),
 cc_data AS (
     SELECT c.customer_id, c.agent, c.created_on, c.talk_duration
