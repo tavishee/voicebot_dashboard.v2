@@ -126,6 +126,8 @@ export default function Dashboard(){
     }catch(e:any){setBulkStatus('Error: '+e.message);}
     finally{setBulkLoading(false);}
   };
+
+  const syncSuperset=async()=>{
     setSsLoading(true);
     setSsStatus('Checking the Superset browser bridge…');
     try{
