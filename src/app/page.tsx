@@ -68,6 +68,7 @@ export default function Dashboard(){
   const[bulkStatus,setBulkStatus]=useState('');
   const[bulkLoading,setBulkLoading]=useState(false);
   const[bulkResults,setBulkResults]=useState<any[]>([]);
+  const[bfDate,setBfDate]=useState(todayStr());
   const[bfStatus,setBfStatus]=useState('');
   const[bfLoading,setBfLoading]=useState(false);
   // Superset sync
