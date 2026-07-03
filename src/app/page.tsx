@@ -63,8 +63,11 @@ export default function Dashboard(){
   const[eParsed,setEParsed]=useState<any>(null);
   const[eSaving,setESaving]=useState(false);
   const[eSaved,setESaved]=useState('');
-  // Backfill
-  const[bfDate,setBfDate]=useState(todayStr());
+  // Bulk Excel upload
+  const[bulkFiles,setBulkFiles]=useState<File[]>([]);
+  const[bulkStatus,setBulkStatus]=useState('');
+  const[bulkLoading,setBulkLoading]=useState(false);
+  const[bulkResults,setBulkResults]=useState<any[]>([]);
   const[bfStatus,setBfStatus]=useState('');
   const[bfLoading,setBfLoading]=useState(false);
   // Superset sync
@@ -105,7 +108,24 @@ export default function Dashboard(){
     finally{setBfLoading(false);}
   };
 
-  const syncSuperset=async()=>{
+  const runBulkUpload=async()=>{
+    if(!bulkFiles.length)return;
+    setBulkLoading(true);setBulkStatus('Uploading...');setBulkResults([]);
+    try{
+      const fd=new FormData();
+      bulkFiles.forEach(f=>fd.append('files',f));
+      const res=await fetch('/api/bulk-upload',{method:'POST',body:fd});
+      const d=await res.json();
+      if(d.results){
+        setBulkResults(d.results);
+        const ok=d.results.filter((r:any)=>r.success).length;
+        const fail=d.results.filter((r:any)=>!r.success).length;
+        setBulkStatus(`✓ ${ok} file(s) saved${fail>0?`, ${fail} failed`:''}`);
+        load();
+      } else setBulkStatus('Error: '+d.error);
+    }catch(e:any){setBulkStatus('Error: '+e.message);}
+    finally{setBulkLoading(false);}
+  };
     setSsLoading(true);
     setSsStatus('Checking the Superset browser bridge…');
     try{
@@ -504,6 +524,52 @@ export default function Dashboard(){
 
         {/* DATA UPLOAD */}
         {tab==='upload'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,maxWidth:1000}}>
+          {/* Bulk Excel upload */}
+          <div style={{...card,gridColumn:'1 / -1'}}>
+            <div style={cardT}><span style={bBot}>GreyLabs</span> Bulk Excel Upload</div>
+            <p style={{fontSize:12,color:C.text3,marginBottom:12}}>
+              Drop multiple <code>Lead_Funnel_Report_YYYY-MM-DD.xlsx</code> files at once. Date is extracted from the filename automatically. Parses Fresh + Retained funnel summary and Lead IDs from each file.
+            </p>
+            <div
+              style={{border:`2px dashed ${bulkFiles.length?C.blueM:C.border}`,borderRadius:8,padding:20,textAlign:'center' as const,cursor:'pointer',marginBottom:12,background:bulkFiles.length?C.blueL+'44':'transparent',transition:'all .2s'}}
+              onClick={()=>document.getElementById('bulk-file')?.click()}
+              onDragOver={e=>{e.preventDefault();}}
+              onDrop={e=>{e.preventDefault();const files=Array.from(e.dataTransfer.files).filter(f=>f.name.endsWith('.xlsx')||f.name.endsWith('.xls'));setBulkFiles(prev=>[...prev,...files]);}}
+            >
+              {bulkFiles.length
+                ?<div>
+                  <div style={{fontSize:13,fontWeight:500,color:C.blue,marginBottom:8}}>{bulkFiles.length} file(s) selected</div>
+                  <div style={{display:'flex',flexWrap:'wrap' as const,gap:6,justifyContent:'center' as const}}>
+                    {bulkFiles.map((f,i)=>(
+                      <div key={i} style={{fontSize:11,background:C.blueL,color:C.blue,padding:'3px 8px',borderRadius:20,display:'flex',alignItems:'center',gap:4}}>
+                        {f.name}
+                        <span style={{cursor:'pointer',fontWeight:600}} onClick={ev=>{ev.stopPropagation();setBulkFiles(prev=>prev.filter((_,j)=>j!==i));}}>×</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                :<div style={{color:C.text3,fontSize:13}}>Drag & drop multiple Excel files here<br/><span style={{fontSize:11}}>or click to select — .xlsx files only</span></div>
+              }
+            </div>
+            <input id="bulk-file" type="file" accept=".xlsx,.xls" multiple style={{display:'none'}} onChange={e=>{const files=Array.from(e.target.files||[]);setBulkFiles(prev=>[...prev,...files]);}}/>
+            <div style={{display:'flex',gap:8}}>
+              <button style={{...btnP,flex:1,background:bulkFiles.length?C.blueM:'#ccc',cursor:bulkFiles.length?'pointer':'not-allowed'}} onClick={runBulkUpload} disabled={bulkLoading||!bulkFiles.length}>
+                {bulkLoading?'Processing...':'Upload all files'}
+              </button>
+              {bulkFiles.length>0&&<button style={{...btn,fontSize:12}} onClick={()=>{setBulkFiles([]);setBulkStatus('');setBulkResults([]);}}>Clear</button>}
+            </div>
+            {bulkStatus&&<div style={{marginTop:10,fontSize:12,padding:'8px 10px',borderRadius:6,background:bulkStatus.startsWith('✓')?C.greenL:C.redL,color:bulkStatus.startsWith('✓')?C.green:C.red}}>{bulkStatus}</div>}
+            {bulkResults.length>0&&<div style={{marginTop:10}}>
+              {bulkResults.map((r,i)=>(
+                <div key={i} style={{fontSize:11,padding:'5px 8px',borderRadius:4,background:r.success?C.greenL:C.redL,color:r.success?C.green:C.red,marginBottom:4}}>
+                  {r.success
+                    ?`✓ ${r.date} — Fresh: ${r.fresh?.sent} sent, ${r.fresh?.qualified} qualified · Retained: ${r.retained?.sent||0} sent, ${r.retained?.qualified||0} qualified · Lead IDs: ${(r.leadIds?.fresh||0)+(r.leadIds?.retained||0)}`
+                    :`✗ ${r.filename} — ${r.error}`
+                  }
+                </div>
+              ))}
+            </div>}
+          </div>
           {/* Enser via Superset */}
           <div style={card}>
             <div style={cardT}><span style={bCC}>Enser</span> Sync from Superset</div>
