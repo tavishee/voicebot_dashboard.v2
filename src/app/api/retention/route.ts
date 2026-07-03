@@ -20,6 +20,7 @@ export async function GET() {
       const raw = await redis.get<string>(k);
       const row = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (row && row.cohort_date) {
+        // Always pull latest leads_sent and cc_sent from funnel data
         const funnelRaw = await redis.get<string>(`funnel:row:v3:${row.cohort_date}`);
         if (funnelRaw) {
           const funnel = typeof funnelRaw === 'string' ? JSON.parse(funnelRaw) : funnelRaw;
