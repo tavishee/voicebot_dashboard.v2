@@ -300,7 +300,7 @@ export default function Dashboard(){
           </div>
           {!rows.length&&<div style={{...card,textAlign:'center' as const,padding:40,color:C.text3}}>No data yet — add data via the "+ Data" tab</div>}
           {rows.length>0&&fMode==='day'&&<>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:12,marginBottom:12}}>
               <div style={card}>
                 <div style={cardT}><span style={bBot}>Fresh</span> Lead Funnel</div>
                 {([{name:'Leads sent',k:'fresh_sent'},{name:'Leads dialled',k:'fresh_dialled'},{name:'Leads connected',k:'fresh_connected'},{name:'Leads qualified',k:'fresh_qualified'}] as {name:string,k:keyof typeof fRows[0]}[]).map((st,i,arr)=>{
