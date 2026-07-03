@@ -23,7 +23,7 @@ export async function GET() {
         const funnelRaw = await redis.get<string>(`funnel:row:v3:${row.cohort_date}`);
         if (funnelRaw) {
           const funnel = typeof funnelRaw === 'string' ? JSON.parse(funnelRaw) : funnelRaw;
-          row.leads_sent = (funnel.fresh_sent || 0) + (funnel.ret_sent || 0);
+          row.leads_sent = funnel.fresh_sent || 0;
         }
       }
       return row;
