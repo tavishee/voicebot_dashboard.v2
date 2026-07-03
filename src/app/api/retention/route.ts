@@ -19,11 +19,12 @@ export async function GET() {
     const rows = await Promise.all(keys.map(async k => {
       const raw = await redis.get<string>(k);
       const row = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      if (row && row.leads_sent === 0 && row.cohort_date) {
+      if (row && row.cohort_date) {
         const funnelRaw = await redis.get<string>(`funnel:row:v3:${row.cohort_date}`);
         if (funnelRaw) {
           const funnel = typeof funnelRaw === 'string' ? JSON.parse(funnelRaw) : funnelRaw;
           row.leads_sent = funnel.fresh_sent || 0;
+          row.cc_sent    = funnel.cc_sent    || 0;
         }
       }
       return row;
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
     if (!redis) return NextResponse.json({ error: 'Redis not configured' }, { status: 500 });
     const key = `retention:${cohort_date}`;
     const raw = await redis.get<string>(key);
-    const existing = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : { cohort_date, leads_sent: 0, grey: {}, enser: {} };
+    const existing = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : { cohort_date, leads_sent: 0, cc_sent: 0, grey: {}, enser: {} };
     existing.enser = enser;
     await redis.set(key, JSON.stringify(existing));
     return NextResponse.json({ success: true });
