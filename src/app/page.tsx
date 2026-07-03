@@ -143,14 +143,15 @@ export default function Dashboard(){
         let allIds:string[]=Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean)));
         const savedRow=rows.find(r=>r.date===ssDate);
         const expectedQualified=(savedRow?.fresh_qualified||0)+(savedRow?.ret_qualified||0);
-        if(!allIds.length||(expectedQualified>0&&allIds.length!==expectedQualified)){
+        if(!allIds.length){
           setSsStatus(`Refreshing the qualified Gmail cohort for ${ssDate}…`);
           const refresh=await fetch(`/api/fetch-data?date=${ssDate}`);
           const refreshData=await refresh.json();
-          if(!refresh.ok||refreshData.success===false)throw new Error(refreshData.error||refreshData.message||'Could not refresh Gmail lead IDs');
-          lidRes=await fetch(`/api/lead-ids?date=${ssDate}`);
-          lidData=await lidRes.json();
-          allIds=Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean))) as string[];
+          if(refreshData.success){
+            lidRes=await fetch(`/api/lead-ids?date=${ssDate}`);
+            lidData=await lidRes.json();
+            allIds=Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean))) as string[];
+         }
         }
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill first.`);setSsLoading(false);return;}
         setSsStatus(`Matching ${allIds.length} qualified leads and calculating CC conversions…`);
