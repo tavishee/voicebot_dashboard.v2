@@ -16,17 +16,12 @@ function weekStart(n=0){const d=new Date();const dow=d.getDay()||7;d.setDate(d.g
 function sumRows(rows:FunnelRow[]){
   const n=(k:keyof FunnelRow)=>rows.reduce((s,r)=>s+(Number(r[k])||0),0);
   return{
-    // fresh
     fs:n('fresh_sent'),fd:n('fresh_dialled'),fc:n('fresh_connected'),fq:n('fresh_qualified'),
     fhi:n('fresh_high'),fmi:n('fresh_medium'),flo:n('fresh_low'),fcb:n('fresh_callback'),
-    // retained
     rs:n('ret_sent'),rd:n('ret_dialled'),rc:n('ret_connected'),rq:n('ret_qualified'),
     rhi:n('ret_high'),rmi:n('ret_medium'),rlo:n('ret_low'),rcb:n('ret_callback'),
-    // combined bot
-    bs:n('bot_sent'),bq:n('bot_qualified'),
-    bd:n('bot_dialled'),bc:n('bot_connected'),
+    bs:n('bot_sent'),bq:n('bot_qualified'),bd:n('bot_dialled'),bc:n('bot_connected'),
     hi:n('high_intent'),mi:n('medium_intent'),li:n('low_intent'),
-    // cc
     cs:n('cc_sent'),ca:n('cc_attempted'),cc:n('cc_connected'),cv:n('cc_converted'),
     churn:n('cc_churn'),coc:n('cc_conversion_on_connect')
   };
@@ -56,14 +51,12 @@ export default function Dashboard(){
   const[wowEnd,setWowEnd]=useState(todayStr());
   const[lFrom,setLFrom]=useState(weekStart(4));
   const[lTo,setLTo]=useState(todayStr());
-  // Enser image upload
   const[eDate,setEDate]=useState(todayStr());
   const[eImage,setEImage]=useState<File|null>(null);
   const[ePreview,setEPreview]=useState('');
   const[eParsed,setEParsed]=useState<any>(null);
   const[eSaving,setESaving]=useState(false);
   const[eSaved,setESaved]=useState('');
-  // Bulk Excel upload
   const[bulkFiles,setBulkFiles]=useState<File[]>([]);
   const[bulkStatus,setBulkStatus]=useState('');
   const[bulkLoading,setBulkLoading]=useState(false);
@@ -71,7 +64,6 @@ export default function Dashboard(){
   const[bfDate,setBfDate]=useState(todayStr());
   const[bfStatus,setBfStatus]=useState('');
   const[bfLoading,setBfLoading]=useState(false);
-  // Superset sync
   const[ssLoading,setSsLoading]=useState(false);
   const[ssStatus,setSsStatus]=useState('');
   const[ssDate,setSsDate]=useState(yesterdayStr());
@@ -84,18 +76,16 @@ export default function Dashboard(){
   };
   useEffect(()=>{load();},[]);
 
-  const uploadEnser = async () => {
-    if (!eImage) return;
-    setESaving(true); setESaved('');
-    try {
-      const fd = new FormData();
-      fd.append('image', eImage);
-      fd.append('date', eDate);
-      const res = await fetch('/api/enser', { method: 'POST', body: fd });
-      const d = await res.json();
-      if (d.success) { setESaved('✓ Saved!'); setEParsed(d.parsed); load(); }
-      else setESaved('Error: ' + d.error);
-    } finally { setESaving(false); }
+  const uploadEnser=async()=>{
+    if(!eImage)return;
+    setESaving(true);setESaved('');
+    try{
+      const fd=new FormData();fd.append('image',eImage);fd.append('date',eDate);
+      const res=await fetch('/api/enser',{method:'POST',body:fd});
+      const d=await res.json();
+      if(d.success){setESaved('✓ Saved!');setEParsed(d.parsed);load();}
+      else setESaved('Error: '+d.error);
+    }finally{setESaving(false);}
   };
 
   const runBackfill=async()=>{
@@ -123,14 +113,13 @@ export default function Dashboard(){
         const fail=d.results.filter((r:any)=>!r.success).length;
         setBulkStatus(`✓ ${ok} file(s) saved${fail>0?`, ${fail} failed`:''}`);
         load();
-      } else setBulkStatus('Error: '+d.error);
+      }else setBulkStatus('Error: '+d.error);
     }catch(e:any){setBulkStatus('Error: '+e.message);}
     finally{setBulkLoading(false);}
   };
 
   const syncSuperset=async()=>{
-    setSsLoading(true);
-    setSsStatus('Checking the Superset browser bridge…');
+    setSsLoading(true);setSsStatus('Checking the Superset browser bridge…');
     try{
       const extensionCall=(type:string,payload:any={},timeout=300000)=>new Promise<any>((resolve,reject)=>{
         const id=Math.random().toString(36).slice(2);
@@ -149,7 +138,6 @@ export default function Dashboard(){
         const next=new Date(`${ssDate}T00:00:00Z`);next.setUTCDate(next.getUTCDate()+1);
         const nextDate=next.toISOString().slice(0,10);
         setSsStatus('Fetching qualified lead IDs…');
-        // Get lead IDs from Redis for this date
         let lidRes=await fetch(`/api/lead-ids?date=${ssDate}`);
         let lidData=await lidRes.json();
         let allIds:string[]=Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean)));
@@ -176,28 +164,20 @@ export default function Dashboard(){
         setSsAuthUrl('');setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);load();return;
       }
       if(window.location.hostname!=='127.0.0.1'&&window.location.hostname!=='localhost')throw new Error('Chrome extension not detected. Install the Voicebot Superset Bridge, then reload this page.');
-      const response=await fetch('/api/superset/sync',{
-        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate}),
-      });
+      const response=await fetch('/api/superset/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate})});
       const data=await response.json();
-      if(response.status===401&&data.authUrl){
-        setSsAuthUrl(data.authUrl);
-        setSsStatus('Sign in to Superset in the new tab, then return here and click Continue sync.');
-        return;
-      }
+      if(response.status===401&&data.authUrl){setSsAuthUrl(data.authUrl);setSsStatus('Sign in to Superset in the new tab, then return here and click Continue sync.');return;}
       if(!response.ok)throw new Error(data.error||'Superset sync failed');
       setSsAuthUrl('');
       const c=data.counts;
       setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);
       load();
-    } catch(e: any) {
+    }catch(e:any){
       if(String(e.message).includes('SUPERSET_AUTH_REQUIRED')||String(e.message).includes('SUPERSET_TAB_REQUIRED')){
         setSsAuthUrl(SUPERSET_LOGIN);setSsStatus('Open Superset SQL Lab in another tab and sign in. Keep that tab open, then click Continue sync.');return;
       }
       setSsStatus('Error: '+e.message);
-    } finally {
-      setSsLoading(false);
-    }
+    }finally{setSsLoading(false);}
   };
 
   const lastDate=rows.length?rows[rows.length-1].date:'—';
@@ -231,9 +211,49 @@ export default function Dashboard(){
     a.download=`funnel_${lFrom}_${lTo}.csv`;a.click();
   }
 
-  const sp_=(s:React.CSSProperties):React.CSSProperties=>s;
+  // Helper: avg of a field across fRows
+  const avgField=(k:string)=>fRows.length?fRows.reduce((s,r)=>s+(Number((r as any)[k])||0),0)/fRows.length:0;
+  // Helper: render a funnel row with step % drop and avg column
+  const FunnelTr=({l,k,prev,headerBg,avgBg,rateColor}:{l:string,k:string,prev:string|null,headerBg:string,avgBg:string,rateColor:string})=>{
+    const avg=Math.round(avgField(k));
+    const avgPrev=prev?Math.round(avgField(prev)):0;
+    const avgDrop=prev&&avgPrev>0?Math.round(avg/avgPrev*1000)/10:null;
+    return(
+      <tr style={{borderBottom:`1px solid ${C.borderL}`}}>
+        <td style={{padding:'6px 10px',fontWeight:400,color:C.text,position:'sticky' as const,left:0,background:C.surface,whiteSpace:'nowrap' as const}}>{l}</td>
+        {fRows.map(r=>{
+          const val=Number((r as any)[k])||0;
+          const prevVal=prev?Number((r as any)[prev])||0:0;
+          const drop=prev&&prevVal>0?Math.round(val/prevVal*1000)/10:null;
+          return(
+            <td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,fontVariantNumeric:'tabular-nums' as const,whiteSpace:'nowrap' as const}}>
+              {val.toLocaleString()}
+              {drop!==null&&<span style={{fontSize:10,color:C.text3,marginLeft:4}}>({drop}%)</span>}
+            </td>
+          );
+        })}
+        <td style={{padding:'6px 10px',textAlign:'right' as const,background:avgBg,fontWeight:500,position:'sticky' as const,right:0,whiteSpace:'nowrap' as const,borderLeft:`1px solid ${C.border}`}}>
+          {avg.toLocaleString()}
+          {avgDrop!==null&&<span style={{fontSize:10,color:rateColor,marginLeft:4}}>({avgDrop}%)</span>}
+        </td>
+      </tr>
+    );
+  };
 
-  const card   =sp_({background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:'16px 18px'});
+  // Helper: render a rate row with avg column
+  const RateTr=({l,k,color,avgBg}:{l:string,k:string,color:string,avgBg:string})=>{
+    const avg=Math.round(avgField(k)*1000)/10;
+    return(
+      <tr style={{borderBottom:`1px solid ${C.borderL}`,background:C.bg}}>
+        <td style={{padding:'6px 10px',color:C.text3,fontStyle:'italic',position:'sticky' as const,left:0,background:C.bg,whiteSpace:'nowrap' as const}}>{l}</td>
+        {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color}}>{Math.round(Number((r as any)[k])*1000)/10}%</td>)}
+        <td style={{padding:'6px 10px',textAlign:'right' as const,background:avgBg,fontWeight:600,position:'sticky' as const,right:0,color,borderLeft:`1px solid ${C.border}`}}>{avg}%</td>
+      </tr>
+    );
+  };
+
+  const sp_=(s:React.CSSProperties):React.CSSProperties=>s;
+  const card   =sp_({background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:'16px 18px',minWidth:0,overflow:'hidden' as const});
   const cardT  =sp_({fontSize:11,fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',color:C.text3,marginBottom:14,display:'flex',alignItems:'center',gap:8});
   const kpi    =sp_({background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:'12px 14px'});
   const inp    =sp_({fontSize:13,padding:'6px 10px',border:`1px solid ${C.border}`,borderRadius:8,background:C.surface,color:C.text,outline:'none'});
@@ -257,12 +277,10 @@ export default function Dashboard(){
   return(
     <>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;background:${C.bg};color:${C.text}}`}</style>
-      {/* Topbar */}
       <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:'0 24px',display:'flex',alignItems:'center',justifyContent:'space-between',height:52,position:'sticky',top:0,zIndex:100}}>
         <div style={{fontSize:13,fontWeight:600}}>Paytm Insurance <span style={{color:C.blue}}>/ Voicebot Funnel</span></div>
         <div style={{fontSize:11,color:C.text3,background:C.bg,padding:'3px 8px',borderRadius:20}}>Last data: {lastDate}</div>
       </div>
-      {/* Nav */}
       <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:'0 24px',display:'flex',overflowX:'auto'}}>
         {TABS.map(t=>(
           <div key={t.id} onClick={()=>setTab(t.id)} style={{padding:'10px 16px',fontSize:t.small?11:13,color:tab===t.id?C.blue:t.small?C.text3:C.text2,cursor:'pointer',borderBottom:tab===t.id?`2px solid ${C.blue}`:'2px solid transparent',marginBottom:-1,fontWeight:tab===t.id?500:400,whiteSpace:'nowrap'}}>
@@ -270,10 +288,9 @@ export default function Dashboard(){
           </div>
         ))}
       </div>
-      <div style={{padding:'20px 24px',maxWidth:1200,margin:'0 auto'}}>
+      <div style={{padding:'20px 24px',maxWidth:1400,margin:'0 auto'}}>
         {error&&<div style={{background:C.redL,border:`1px solid #F7C1C1`,borderRadius:8,padding:'12px 16px',fontSize:13,color:C.red,marginBottom:16}}>{error}</div>}
 
-        {/* FUNNEL */}
         {tab==='funnel'&&<>
           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap' as const}}>
             <span style={{fontSize:12,color:C.text2}}>View</span>
@@ -368,68 +385,70 @@ export default function Dashboard(){
               }
             </div>
           </>}
-          {rows.length>0&&fMode==='range'&&<div style={{...card,overflowX:'auto' as const}}>
+          {rows.length>0&&fMode==='range'&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:'16px 18px',overflowX:'auto' as const,maxHeight:'85vh',overflow:'auto' as const}}>
             {fRows.length===0
               ?<div style={{textAlign:'center' as const,padding:40,color:C.text3}}>No data for this range</div>
               :<table style={{width:'100%',borderCollapse:'collapse' as const,fontSize:12}}>
-                <thead><tr style={{borderBottom:`2px solid ${C.border}`}}>
-                  <th style={{textAlign:'left' as const,padding:'8px 10px',fontWeight:600,color:C.text2,minWidth:160,position:'sticky' as const,left:0,background:C.surface}}>Stage</th>
-                  {fRows.map(r=><th key={r.date} style={{textAlign:'right' as const,padding:'8px 10px',fontWeight:500,color:C.text2,whiteSpace:'nowrap' as const}}>{r.date.slice(5)}</th>)}
-                </tr></thead>
-                <tbody>
-                  <tr style={{background:'#BFDBFE44'}}><td colSpan={fRows.length+1} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:C.blue,position:'sticky' as const,left:0}}>Fresh Leads</td></tr>
-                  {[{l:'Leads sent',k:'fresh_sent'},{l:'Leads dialled',k:'fresh_dialled'},{l:'Leads connected',k:'fresh_connected'},{l:'Leads qualified',k:'fresh_qualified'},{l:'High intent',k:'fresh_high'},{l:'Medium intent',k:'fresh_medium'},{l:'Low intent',k:'fresh_low'},{l:'Callback w/ agent',k:'fresh_callback'}].map((row,ri)=>(
-                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`}}>
-                      <td style={{padding:'6px 10px',fontWeight:ri<4?500:400,color:C.text,position:'sticky' as const,left:0,background:C.surface}}>{row.l}</td>
-                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,fontVariantNumeric:'tabular-nums' as const}}>{(Number((r as any)[row.k])||0).toLocaleString()}</td>)}
-                    </tr>
-                  ))}
-                  {[{l:'Connect %',k:'fresh_connect_rate'},{l:'Qualify %',k:'fresh_qualify_rate'}].map(row=>(
-                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`,background:C.bg}}>
-                      <td style={{padding:'6px 10px',color:C.text3,fontStyle:'italic',position:'sticky' as const,left:0,background:C.bg}}>{row.l}</td>
-                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:C.blue}}>{Math.round(Number((r as any)[row.k])*1000)/10}%</td>)}
-                    </tr>
-                  ))}
-                  <tr style={{background:'#EDE9FE44'}}><td colSpan={fRows.length+1} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:'#5B21B6',position:'sticky' as const,left:0}}>Retained Leads</td></tr>
-                  {[{l:'Leads sent',k:'ret_sent'},{l:'Leads dialled',k:'ret_dialled'},{l:'Leads connected',k:'ret_connected'},{l:'Leads qualified',k:'ret_qualified'},{l:'High intent',k:'ret_high'},{l:'Medium intent',k:'ret_medium'},{l:'Low intent',k:'ret_low'},{l:'Callback w/ agent',k:'ret_callback'}].map((row,ri)=>(
-                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`}}>
-                      <td style={{padding:'6px 10px',fontWeight:ri<4?500:400,color:C.text,position:'sticky' as const,left:0,background:C.surface}}>{row.l}</td>
-                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,fontVariantNumeric:'tabular-nums' as const}}>{(Number((r as any)[row.k])||0).toLocaleString()}</td>)}
-                    </tr>
-                  ))}
-                  {[{l:'Connect %',k:'ret_connect_rate'},{l:'Qualify %',k:'ret_qualify_rate'}].map(row=>(
-                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`,background:C.bg}}>
-                      <td style={{padding:'6px 10px',color:C.text3,fontStyle:'italic',position:'sticky' as const,left:0,background:C.bg}}>{row.l}</td>
-                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:'#7C3AED'}}>{Math.round(Number((r as any)[row.k])*1000)/10}%</td>)}
-                    </tr>
-                  ))}
-                  <tr style={{background:C.amberL+'44'}}><td colSpan={fRows.length+1} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:C.amber,position:'sticky' as const,left:0}}>Combined Qualified → CC</td></tr>
-                  <tr style={{borderBottom:`1px solid ${C.borderL}`,background:C.amberL+'22'}}>
-                    <td style={{padding:'6px 10px',fontWeight:600,color:C.amber,position:'sticky' as const,left:0,background:C.amberL+'22'}}>Total qualified</td>
-                    {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:C.amber,fontWeight:600}}>{(r.bot_qualified||0).toLocaleString()}</td>)}
+                <thead style={{position:'sticky' as const,top:0,zIndex:10}}>
+                  <tr style={{borderBottom:`2px solid ${C.border}`}}>
+                    <th style={{textAlign:'left' as const,padding:'8px 10px',fontWeight:600,color:C.text2,minWidth:160,position:'sticky' as const,left:0,background:C.surface,zIndex:20}}>Stage</th>
+                    {fRows.map(r=><th key={r.date} style={{textAlign:'right' as const,padding:'8px 10px',fontWeight:500,color:C.text2,whiteSpace:'nowrap' as const,background:C.surface}}>{r.date.slice(5)}</th>)}
+                    <th style={{textAlign:'right' as const,padding:'8px 10px',fontWeight:700,color:C.blue,whiteSpace:'nowrap' as const,background:C.blueL,position:'sticky' as const,right:0,borderLeft:`1px solid ${C.border}`,zIndex:20}}>Avg</th>
                   </tr>
+                </thead>
+                <tbody>
+                  {/* FRESH */}
+                  <tr style={{background:'#BFDBFE44'}}><td colSpan={fRows.length+2} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:C.blue,position:'sticky' as const,left:0}}>Fresh Leads</td></tr>
+                  <FunnelTr l="Leads sent" k="fresh_sent" prev={null} headerBg={C.blueL} avgBg={C.blueL} rateColor={C.blue}/>
+                  <FunnelTr l="Leads dialled" k="fresh_dialled" prev="fresh_sent" headerBg={C.blueL} avgBg={C.blueL} rateColor={C.blue}/>
+                  <FunnelTr l="Leads connected" k="fresh_connected" prev="fresh_dialled" headerBg={C.blueL} avgBg={C.blueL} rateColor={C.blue}/>
+                  <FunnelTr l="Leads qualified" k="fresh_qualified" prev="fresh_connected" headerBg={C.blueL} avgBg={C.blueL} rateColor={C.blue}/>
+                  <FunnelTr l="High intent" k="fresh_high" prev="fresh_qualified" headerBg={C.blueL} avgBg={C.blueL} rateColor={C.blue}/>
+                  <FunnelTr l="Medium intent" k="fresh_medium" prev="fresh_qualified" headerBg={C.blueL} avgBg={C.blueL} rateColor={C.blue}/>
+                  <FunnelTr l="Low intent" k="fresh_low" prev="fresh_qualified" headerBg={C.blueL} avgBg={C.blueL} rateColor={C.blue}/>
+                  <FunnelTr l="Callback w/ agent" k="fresh_callback" prev="fresh_qualified" headerBg={C.blueL} avgBg={C.blueL} rateColor={C.blue}/>
+                  <RateTr l="Connect %" k="fresh_connect_rate" color={C.blue} avgBg={C.blueL}/>
+                  <RateTr l="Qualify %" k="fresh_qualify_rate" color={C.blue} avgBg={C.blueL}/>
+
+                  {/* RETAINED */}
+                  <tr style={{background:'#EDE9FE44'}}><td colSpan={fRows.length+2} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:'#5B21B6',position:'sticky' as const,left:0}}>Retained Leads</td></tr>
+                  <FunnelTr l="Leads sent" k="ret_sent" prev={null} headerBg={C.purpleL} avgBg={C.purpleL} rateColor={C.purpleM}/>
+                  <FunnelTr l="Leads dialled" k="ret_dialled" prev="ret_sent" headerBg={C.purpleL} avgBg={C.purpleL} rateColor={C.purpleM}/>
+                  <FunnelTr l="Leads connected" k="ret_connected" prev="ret_dialled" headerBg={C.purpleL} avgBg={C.purpleL} rateColor={C.purpleM}/>
+                  <FunnelTr l="Leads qualified" k="ret_qualified" prev="ret_connected" headerBg={C.purpleL} avgBg={C.purpleL} rateColor={C.purpleM}/>
+                  <FunnelTr l="High intent" k="ret_high" prev="ret_qualified" headerBg={C.purpleL} avgBg={C.purpleL} rateColor={C.purpleM}/>
+                  <FunnelTr l="Medium intent" k="ret_medium" prev="ret_qualified" headerBg={C.purpleL} avgBg={C.purpleL} rateColor={C.purpleM}/>
+                  <FunnelTr l="Low intent" k="ret_low" prev="ret_qualified" headerBg={C.purpleL} avgBg={C.purpleL} rateColor={C.purpleM}/>
+                  <FunnelTr l="Callback w/ agent" k="ret_callback" prev="ret_qualified" headerBg={C.purpleL} avgBg={C.purpleL} rateColor={C.purpleM}/>
+                  <RateTr l="Connect %" k="ret_connect_rate" color={C.purpleM} avgBg={C.purpleL}/>
+                  <RateTr l="Qualify %" k="ret_qualify_rate" color={C.purpleM} avgBg={C.purpleL}/>
+
+                  {/* COMBINED QUALIFIED */}
+                  <tr style={{background:C.amberL+'44'}}><td colSpan={fRows.length+2} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:C.amber,position:'sticky' as const,left:0}}>Combined Qualified → CC</td></tr>
+                  <FunnelTr l="Total qualified" k="bot_qualified" prev={null} headerBg={C.amberL} avgBg={C.amberL} rateColor={C.amber}/>
                   <tr style={{borderBottom:`2px dashed ${C.amber}`}}>
                     <td style={{padding:'6px 10px',color:C.amber,fontStyle:'italic',position:'sticky' as const,left:0,background:C.surface}}>Gap (qual → CC)</td>
                     {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:C.amber}}>{r.cc_sent>0?((r.bot_qualified||0)-(r.cc_sent||0)).toLocaleString():'—'}</td>)}
+                    <td style={{padding:'6px 10px',textAlign:'right' as const,background:C.amberL,color:C.amber,fontWeight:500,position:'sticky' as const,right:0,borderLeft:`1px solid ${C.border}`}}>
+                      {Math.round(avgField('bot_qualified')-avgField('cc_sent')).toLocaleString()}
+                    </td>
                   </tr>
-                  <tr style={{background:C.greenL+'44'}}><td colSpan={fRows.length+1} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:C.green,position:'sticky' as const,left:0}}>Call Centre (bot-qualified leads only)</td></tr>
-                  {[{l:'CC received',k:'cc_sent'},{l:'CC attempted',k:'cc_attempted'},{l:'CC connected',k:'cc_connected'},{l:'CC converted',k:'cc_converted'}].map((row,ri)=>(
-                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`}}>
-                      <td style={{padding:'6px 10px',fontWeight:ri===0?600:400,color:ri===0?C.green:C.text,position:'sticky' as const,left:0,background:C.surface}}>{row.l}</td>
-                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,fontVariantNumeric:'tabular-nums' as const}}>{r.cc_sent>0?(Number((r as any)[row.k])||0).toLocaleString():'—'}</td>)}
-                    </tr>
-                  ))}
-                  {[{l:'CC convert %',k:'cc_convert_rate'},{l:'Conv on connect %',k:'cc_conversion_on_connect'},{l:'End-to-end %',k:'e2e_rate'}].map(row=>(
-                    <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`,background:C.bg}}>
-                      <td style={{padding:'6px 10px',color:C.text3,fontStyle:'italic',position:'sticky' as const,left:0,background:C.bg}}>{row.l}</td>
-                      {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:C.green}}>{r.cc_sent>0?Math.round(Number((r as any)[row.k])*10000)/100+'%':'—'}</td>)}
-                    </tr>
-                  ))}
+
+                  {/* CC */}
+                  <tr style={{background:C.greenL+'44'}}><td colSpan={fRows.length+2} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:C.green,position:'sticky' as const,left:0}}>Call Centre (bot-qualified leads only)</td></tr>
+                  <FunnelTr l="CC received" k="cc_sent" prev={null} headerBg={C.greenL} avgBg={C.greenL} rateColor={C.green}/>
+                  <FunnelTr l="CC attempted" k="cc_attempted" prev="cc_sent" headerBg={C.greenL} avgBg={C.greenL} rateColor={C.green}/>
+                  <FunnelTr l="CC connected" k="cc_connected" prev="cc_attempted" headerBg={C.greenL} avgBg={C.greenL} rateColor={C.green}/>
+                  <FunnelTr l="CC converted" k="cc_converted" prev="cc_connected" headerBg={C.greenL} avgBg={C.greenL} rateColor={C.green}/>
+                  <RateTr l="CC convert %" k="cc_convert_rate" color={C.green} avgBg={C.greenL}/>
+                  <RateTr l="Conv on connect %" k="cc_conversion_on_connect" color={C.green} avgBg={C.greenL}/>
+                  <RateTr l="End-to-end %" k="e2e_rate" color={C.green} avgBg={C.greenL}/>
                 </tbody>
               </table>
             }
           </div>}
         </>}
+
         {tab==='trends'&&<>
           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap'}}>
             <span style={{fontSize:12,color:C.text2}}>Metric</span>
@@ -454,7 +473,6 @@ export default function Dashboard(){
           </div>
         </>}
 
-        {/* WOW */}
         {tab==='wow'&&<>
           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
             <span style={{fontSize:12,color:C.text2}}>Week ending</span>
@@ -490,7 +508,6 @@ export default function Dashboard(){
           </div>
         </>}
 
-        {/* LOG */}
         {tab==='log'&&<>
           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap'}}>
             <span style={{fontSize:12,color:C.text2}}>From</span>
@@ -525,14 +542,10 @@ export default function Dashboard(){
           </div>
         </>}
 
-        {/* DATA UPLOAD */}
         {tab==='upload'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,maxWidth:1000}}>
-          {/* Bulk Excel upload */}
           <div style={{...card,gridColumn:'1 / -1'}}>
             <div style={cardT}><span style={bBot}>GreyLabs</span> Bulk Excel Upload</div>
-            <p style={{fontSize:12,color:C.text3,marginBottom:12}}>
-              Drop multiple <code>Lead_Funnel_Report_YYYY-MM-DD.xlsx</code> files at once. Date is extracted from the filename automatically. Parses Fresh + Retained funnel summary and Lead IDs from each file.
-            </p>
+            <p style={{fontSize:12,color:C.text3,marginBottom:12}}>Drop multiple <code>Lead_Funnel_Report_YYYY-MM-DD.xlsx</code> files at once. Date extracted from filename automatically.</p>
             <div
               style={{border:`2px dashed ${bulkFiles.length?C.blueM:C.border}`,borderRadius:8,padding:20,textAlign:'center' as const,cursor:'pointer',marginBottom:12,background:bulkFiles.length?C.blueL+'44':'transparent',transition:'all .2s'}}
               onClick={()=>document.getElementById('bulk-file')?.click()}
@@ -565,20 +578,14 @@ export default function Dashboard(){
             {bulkResults.length>0&&<div style={{marginTop:10}}>
               {bulkResults.map((r,i)=>(
                 <div key={i} style={{fontSize:11,padding:'5px 8px',borderRadius:4,background:r.success?C.greenL:C.redL,color:r.success?C.green:C.red,marginBottom:4}}>
-                  {r.success
-                    ?`✓ ${r.date} — Fresh: ${r.fresh?.sent} sent, ${r.fresh?.qualified} qualified · Retained: ${r.retained?.sent||0} sent, ${r.retained?.qualified||0} qualified · Lead IDs: ${(r.leadIds?.fresh||0)+(r.leadIds?.retained||0)}`
-                    :`✗ ${r.filename} — ${r.error}`
-                  }
+                  {r.success?`✓ ${r.date} — Fresh: ${r.fresh?.sent} sent, ${r.fresh?.qualified} qualified · Retained: ${r.retained?.sent||0} sent, ${r.retained?.qualified||0} qualified · Lead IDs: ${(r.leadIds?.fresh||0)+(r.leadIds?.retained||0)}`:`✗ ${r.filename} — ${r.error}`}
                 </div>
               ))}
             </div>}
           </div>
-          {/* Enser via Superset */}
           <div style={card}>
             <div style={cardT}><span style={bCC}>Enser</span> Sync from Superset</div>
-            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>
-              Uses the Voicebot Superset Bridge extension to query through your corporate network and existing Superset login.
-            </p>
+            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>Uses the Voicebot Superset Bridge extension to query through your corporate network and existing Superset login.</p>
             <div style={{marginBottom:10}}>
               <label style={igL}>Date to sync</label>
               <input style={igI} type="date" value={ssDate} onChange={e=>setSsDate(e.target.value)}/>
@@ -588,18 +595,10 @@ export default function Dashboard(){
             </button>
             {ssAuthUrl&&<a href={SUPERSET_LOGIN} target="_blank" rel="noreferrer" style={{display:'block',textAlign:'center',marginTop:8,fontSize:12,color:C.blue}}>Open Superset →</a>}
             {ssStatus&&<div style={{marginTop:10,fontSize:12,color:ssStatus.startsWith('✓')?C.green:ssAuthUrl?C.amber:C.red,padding:'8px 10px',background:ssStatus.startsWith('✓')?C.greenL:ssAuthUrl?C.amberL:C.redL,borderRadius:6}}>{ssStatus}</div>}
-            <hr style={{border:'none',borderTop:`1px dashed ${C.border}`,margin:'14px 0'}}/>
-            <p style={{fontSize:11,color:C.text3}}>
-              Calls and attributed conversions are fetched together for the selected calendar day.
-            </p>
           </div>
-
-          {/* GreyLabs backfill */}
           <div style={card}>
             <div style={cardT}><span style={bBot}>GreyLabs</span> Backfill from Gmail</div>
-            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>
-              Fetch GreyLabs data for a past date from your Gmail inbox.
-            </p>
+            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>Fetch GreyLabs data for a past date from your Gmail inbox.</p>
             <div style={{marginBottom:10}}>
               <label style={igL}>Date to fetch</label>
               <input style={igI} type="date" value={bfDate} onChange={e=>setBfDate(e.target.value)}/>
@@ -609,8 +608,6 @@ export default function Dashboard(){
             </button>
             {bfStatus&&<div style={{marginTop:10,fontSize:12,color:bfStatus.startsWith('✓')?C.green:C.red,padding:'8px 10px',background:bfStatus.startsWith('✓')?C.greenL:C.redL,borderRadius:6}}>{bfStatus}</div>}
           </div>
-
-          {/* Enser image upload — fallback */}
           <div style={card}>
             <div style={cardT}><span style={bCC}>Enser</span> Manual upload (fallback)</div>
             <p style={{fontSize:12,color:C.text3,marginBottom:14}}>Upload the WhatsApp screenshot if Superset sync isn't ready yet.</p>
@@ -624,10 +621,7 @@ export default function Dashboard(){
               onDragOver={e=>{e.preventDefault();}}
               onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f){setEImage(f);setEPreview(URL.createObjectURL(f));}}}
             >
-              {ePreview
-                ? <img src={ePreview} style={{maxWidth:'100%',maxHeight:160,borderRadius:4}} alt="preview"/>
-                : <div style={{color:C.text3,fontSize:13}}>Drag & drop or click to upload<br/><span style={{fontSize:11}}>JPG, PNG accepted</span></div>
-              }
+              {ePreview?<img src={ePreview} style={{maxWidth:'100%',maxHeight:160,borderRadius:4}} alt="preview"/>:<div style={{color:C.text3,fontSize:13}}>Drag & drop or click to upload<br/><span style={{fontSize:11}}>JPG, PNG accepted</span></div>}
             </div>
             <input id="enser-file" type="file" accept="image/*" style={{display:'none'}} onChange={e=>{const f=e.target.files?.[0];if(f){setEImage(f);setEPreview(URL.createObjectURL(f));}}}/>
             <button style={{...btnP,width:'100%',background:eImage?C.greenM:'#ccc',cursor:eImage?'pointer':'not-allowed'}} onClick={uploadEnser} disabled={eSaving||!eImage}>
@@ -636,9 +630,7 @@ export default function Dashboard(){
             {eSaved&&(
               <div style={{marginTop:10,fontSize:12,padding:'8px 10px',borderRadius:6,background:eSaved.startsWith('✓')?C.greenL:C.redL,color:eSaved.startsWith('✓')?C.green:C.red}}>
                 {eSaved}
-                {eParsed&&<div style={{marginTop:6,fontSize:11}}>
-                  Sent: {eParsed.cc_sent} · Att: {eParsed.cc_attempted} · Conn: {eParsed.cc_connected} · Conv: {eParsed.cc_converted}
-                </div>}
+                {eParsed&&<div style={{marginTop:6,fontSize:11}}>Sent: {eParsed.cc_sent} · Att: {eParsed.cc_attempted} · Conn: {eParsed.cc_connected} · Conv: {eParsed.cc_converted}</div>}
               </div>
             )}
           </div>
