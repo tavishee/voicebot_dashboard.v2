@@ -134,17 +134,18 @@ export async function fetchGreylabsData(dateStr: string) {
   const auth  = getOAuthClient();
   const gmail = google.gmail({ version: 'v1', auth });
   const target   = new Date(dateStr + 'T00:00:00+05:30');
-  const after    = new Date(target); after.setDate(target.getDate() - 1);
-  const before   = new Date(target); before.setDate(target.getDate() + 1);
+  const after    = new Date(target); after.setDate(target.getDate() - 2);
+  const before   = new Date(target); before.setDate(target.getDate() + 2);
   const afterTs  = Math.floor(after.getTime() / 1000);
   const beforeTs = Math.floor(before.getTime() / 1000);
+  // Include subject keyword to narrow to the right report even with wider date window
   const res = await gmail.users.messages.list({
     userId: 'me',
-    q: `from:customreports@greylabs.ai after:${afterTs} before:${beforeTs}`,
-    maxResults: 5,
+    q: `from:customreports@greylabs.ai subject:"Lead Funnel Report" after:${afterTs} before:${beforeTs}`,
+    maxResults: 10,
   });
   const messages = res.data.messages;
-  if (!messages?.length) { console.log(`GreyLabs email not found for ${dateStr}`); return null; }
+  if (!messages?.length) { console.log(`GreyLabs email not found for ${dateStr} — email may have been deleted or is older than Gmail retention. Use bulk Excel upload instead.`); return null; }
   const msg = await gmail.users.messages.get({ userId: 'me', id: messages[0].id!, format: 'full' });
   const body = getEmailBody(msg.data.payload);
   if (!body) return null;

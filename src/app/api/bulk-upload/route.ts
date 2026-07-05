@@ -43,8 +43,11 @@ function parseExcelDate(val: any): string | null {
   return null;
 }
 
-async function saveLeadIds(date: string, freshIds: string[], retainedIds: string[]) {
-  const payload = JSON.stringify({ freshIds, retainedIds, allIds: [...freshIds, ...retainedIds] });
+async function saveLeadIds(date: string, freshIds: string[], retainedIds: string[], allFreshIds?: string[], allRetainedIds?: string[]) {
+  // freshIds/retainedIds = qualified leads only (for retention sync denominator accuracy)
+  // allIds = all leads including unqualified (for Superset combinedQuery which needs full set)
+  const allIds = [...(allFreshIds||freshIds), ...(allRetainedIds||retainedIds)];
+  const payload = JSON.stringify({ freshIds, retainedIds, allIds });
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (url && token) {
@@ -169,8 +172,13 @@ export async function POST(request: Request) {
               };
               const headerIdx = frows.findIndex((r:any[]) => String(r[0]||'').trim().toLowerCase() === 'lead id');
               if (headerIdx >= 0) {
+                const fHeaders = (frows[headerIdx]||[]).map((h:any)=>String(h||'').trim().toLowerCase());
+                const qualCol = fHeaders.findIndex((h:string)=>h==='qualified');
                 freshRows = frows.slice(headerIdx+1).filter((r:any[]) => r[0]);
-                freshIds  = freshRows.map((r:any[]) => String(r[0]).trim()).filter(Boolean);
+                // freshIds = only qualified leads (Qualified=YES) for retention sync accuracy
+                freshIds  = freshRows
+                  .filter((r:any[]) => qualCol<0 || String(r[qualCol]||'').trim().toUpperCase()==='YES')
+                  .map((r:any[]) => String(r[0]).trim()).filter(Boolean);
               }
             }
 
@@ -187,8 +195,13 @@ export async function POST(request: Request) {
               };
               const headerIdx = rrows.findIndex((r:any[]) => String(r[0]||'').trim().toLowerCase() === 'lead id');
               if (headerIdx >= 0) {
+                const rHeaders = (rrows[headerIdx]||[]).map((h:any)=>String(h||'').trim().toLowerCase());
+                const qualColR = rHeaders.findIndex((h:string)=>h==='qualified');
                 retRows     = rrows.slice(headerIdx+1).filter((r:any[]) => r[0]);
-                retainedIds = retRows.map((r:any[]) => String(r[0]).trim()).filter(Boolean);
+                // retainedIds = only qualified leads (Qualified=YES) for retention sync accuracy
+                retainedIds = retRows
+                  .filter((r:any[]) => qualColR<0 || String(r[qualColR]||'').trim().toUpperCase()==='YES')
+                  .map((r:any[]) => String(r[0]).trim()).filter(Boolean);
               }
             }
           } else {
@@ -243,8 +256,11 @@ export async function POST(request: Request) {
             } : {}),
           });
 
-          if (freshIds.length || retainedIds.length) {
-            await saveLeadIds(reportDate, freshIds, retainedIds);
+          // allFreshIds/allRetainedIds = every lead ID (unfiltered) for Superset combinedQuery
+          const allFreshIds = isFormatA ? freshRows.map((r:any[]) => String(r[0]).trim()).filter(Boolean) : freshIds;
+          const allRetainedIds = isFormatA ? retRows.map((r:any[]) => String(r[0]).trim()).filter(Boolean) : retainedIds;
+          if (allFreshIds.length || allRetainedIds.length) {
+            await saveLeadIds(reportDate, freshIds, retainedIds, allFreshIds, allRetainedIds);
           }
 
           if (isFormatA && hasRedis) {

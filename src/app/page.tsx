@@ -135,18 +135,25 @@ export default function Dashboard(){
       if(!extReady){setRetStatus('✗ Chrome extension not detected');setRetLoading(false);return;}
       const lidRes=await fetch(`/api/lead-ids?date=${retSyncDate}`);
       const lidData=await lidRes.json();
-      const allIds:string[]=lidData.allIds||[];
-      if(!allIds.length){setRetStatus(`✗ No lead IDs for ${retSyncDate}. Run backfill first.`);setRetLoading(false);return;}
-      setRetStatus(`Running conversion cohort query for ${allIds.length} leads…`);
+      // Use freshIds+retainedIds (already filtered to Qualified=YES from Gmail) not allIds which includes unqualified bulk-upload leads
+      const qualifiedIds:string[]=[...(lidData.freshIds||[]),...(lidData.retainedIds||[])];
+      const idsToUse:string[]=qualifiedIds.length>0?qualifiedIds:(lidData.allIds||[]);
+      if(!idsToUse.length){setRetStatus(`✗ No lead IDs for ${retSyncDate}. Run Gmail backfill or upload Format A Excel first.`);setRetLoading(false);return;}
+      setRetStatus(`Running conversion cohort query for ${idsToUse.length} qualified leads…`);
+      // Anchor date window to cohort date (not CURRENT_DATE) so older cohorts work correctly
       const next=new Date(`${retSyncDate}T00:00:00Z`);next.setUTCDate(next.getUTCDate()+7);
       const nextDate=next.toISOString().slice(0,10);
+      const lookback=new Date(`${retSyncDate}T00:00:00Z`);lookback.setUTCDate(lookback.getUTCDate()+60);
+      const lookbackDate=lookback.toISOString().slice(0,10);
+      const lookbackFmt=lookbackDate.replace(/-/g,'');
+      const cohortFmt=retSyncDate.replace(/-/g,'');
       const idChunks:string[][]=[];
-      for(let i=0;i<allIds.length;i+=1000)idChunks.push(allIds.slice(i,i+1000));
+      for(let i=0;i<idsToUse.length;i+=1000)idChunks.push(idsToUse.slice(i,i+1000));
       const qualifiedLeadSources=idChunks.map((chunk:string[])=>{
-        const values=chunk.map((id:string)=>`('${id.replace(/'/g,"''")}')`).join(', ');
+        const values=chunk.map((id:string)=>`('${id.replace(/'/g,"''")}')` ).join(', ');
         return `SELECT CAST(id AS VARCHAR) AS lead_id FROM (VALUES ${values}) AS t(id)`;
       }).join('\n    UNION ALL\n    ');
-      const sql=`WITH qualified_leads AS (\n    ${qualifiedLeadSources}\n),policy_purchases AS (SELECT CAST(COALESCE(p.created_by,p.owned_by) AS VARCHAR) AS customer_id,DATE(MIN(oi.created_on)) AS purchase_date,p.proposal_id,oi.oms_item_id,MAX(CASE WHEN oi.status IN ('issued','policy_pdf_generated') THEN 1 ELSE 0 END) AS issued_flag FROM (SELECT id,oms_order_id,oms_item_id,price,status,created_on,ROW_NUMBER() OVER (PARTITION BY id ORDER BY modified_on DESC) AS rn FROM glue_catalog.motor_proposal_3.order_item WHERE modified_on>=DATE_SUB(CURRENT_DATE(),INTERVAL 60 DAY) AND date>=DATE_FORMAT(DATE_SUB(CURRENT_DATE(),INTERVAL 60 DAY),'%Y%m%d')) oi JOIN (SELECT id,oms_order_id,proposal_id,ROW_NUMBER() OVER (PARTITION BY id ORDER BY modified_on DESC) AS rn FROM glue_catalog.motor_proposal_3.order_detail WHERE modified_on>=DATE_SUB(CURRENT_DATE(),INTERVAL 60 DAY) AND date>=DATE_FORMAT(DATE_SUB(CURRENT_DATE(),INTERVAL 60 DAY),'%Y%m%d')) od ON oi.oms_order_id=od.oms_order_id AND oi.rn=1 AND od.rn=1 JOIN (SELECT id,proposal_id,vehicle_type,created_by,owned_by,coverage_type,ROW_NUMBER() OVER (PARTITION BY id ORDER BY modified_on DESC) AS rn FROM glue_catalog.motor_proposal_3.proposal WHERE modified_on>=DATE_SUB(CURRENT_DATE(),INTERVAL 60 DAY) AND date>=DATE_FORMAT(DATE_SUB(CURRENT_DATE(),INTERVAL 60 DAY),'%Y%m%d')) p ON p.proposal_id=od.proposal_id AND p.rn=1 WHERE p.coverage_type IN ('comprehensive_1y_1y','own_damage_1y','third_party_1y') AND oi.created_on>=DATE_SUB(CURRENT_DATE(),INTERVAL 60 DAY) AND CAST(COALESCE(p.created_by,p.owned_by) AS VARCHAR) IN (SELECT lead_id FROM qualified_leads) GROUP BY CAST(COALESCE(p.created_by,p.owned_by) AS VARCHAR),p.proposal_id,oi.oms_item_id)\nSELECT DATEDIFF(DATE(purchase_date),DATE('${retSyncDate}')) AS day_number,COUNT(DISTINCT customer_id) AS converted FROM policy_purchases WHERE purchase_date>='${retSyncDate}' AND purchase_date<'${nextDate}' AND issued_flag=1 GROUP BY DATEDIFF(DATE(purchase_date),DATE('${retSyncDate}')) ORDER BY day_number`;
+      const sql=`WITH qualified_leads AS (\n    ${qualifiedLeadSources}\n),policy_purchases AS (SELECT CAST(COALESCE(p.created_by,p.owned_by) AS VARCHAR) AS customer_id,DATE(MIN(oi.created_on)) AS purchase_date,p.proposal_id,oi.oms_item_id,MAX(CASE WHEN oi.status IN ('issued','policy_pdf_generated') THEN 1 ELSE 0 END) AS issued_flag FROM (SELECT id,oms_order_id,oms_item_id,price,status,created_on,ROW_NUMBER() OVER (PARTITION BY id ORDER BY modified_on DESC) AS rn FROM glue_catalog.motor_proposal_3.order_item WHERE modified_on>='${retSyncDate} 00:00:00' AND modified_on<'${lookbackDate} 00:00:00' AND date>='${cohortFmt}' AND date<='${lookbackFmt}') oi JOIN (SELECT id,oms_order_id,proposal_id,ROW_NUMBER() OVER (PARTITION BY id ORDER BY modified_on DESC) AS rn FROM glue_catalog.motor_proposal_3.order_detail WHERE modified_on>='${retSyncDate} 00:00:00' AND modified_on<'${lookbackDate} 00:00:00' AND date>='${cohortFmt}' AND date<='${lookbackFmt}') od ON oi.oms_order_id=od.oms_order_id AND oi.rn=1 AND od.rn=1 JOIN (SELECT id,proposal_id,vehicle_type,created_by,owned_by,coverage_type,ROW_NUMBER() OVER (PARTITION BY id ORDER BY modified_on DESC) AS rn FROM glue_catalog.motor_proposal_3.proposal WHERE modified_on>='${retSyncDate} 00:00:00' AND modified_on<'${lookbackDate} 00:00:00' AND date>='${cohortFmt}' AND date<='${lookbackFmt}') p ON p.proposal_id=od.proposal_id AND p.rn=1 WHERE p.coverage_type IN ('comprehensive_1y_1y','own_damage_1y','third_party_1y') AND oi.created_on>='${retSyncDate} 00:00:00' AND oi.created_on<'${lookbackDate} 00:00:00' AND CAST(COALESCE(p.created_by,p.owned_by) AS VARCHAR) IN (SELECT lead_id FROM qualified_leads) GROUP BY CAST(COALESCE(p.created_by,p.owned_by) AS VARCHAR),p.proposal_id,oi.oms_item_id)\nSELECT DATEDIFF(DATE(purchase_date),DATE('${retSyncDate}')) AS day_number,COUNT(DISTINCT customer_id) AS converted FROM policy_purchases WHERE purchase_date>='${retSyncDate}' AND purchase_date<'${nextDate}' AND issued_flag=1 GROUP BY DATEDIFF(DATE(purchase_date),DATE('${retSyncDate}')) ORDER BY day_number`;
       const convRows=await extensionCall2('RUN_QUERY',{sql});
       const enser:Record<string,{converted:number}>={};
       for(const r of (convRows||[])){const d=Number(r.day_number);if(d>=0&&d<=6)enser[`day${d}`]={converted:Number(r.converted)||0};}
@@ -703,3 +710,4 @@ export default function Dashboard(){
     </>
   );
 }
+
