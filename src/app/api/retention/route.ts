@@ -20,12 +20,13 @@ export async function GET() {
       const raw = await redis.get<string>(k);
       const row = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (row && row.cohort_date) {
-        // Always pull latest leads_sent and cc_sent from funnel data
+        // Pull leads_sent from funnel row; cc_sent comes from Enser sync (retention row), not funnel
         const funnelRaw = await redis.get<string>(`funnel:row:v3:${row.cohort_date}`);
         if (funnelRaw) {
           const funnel = typeof funnelRaw === 'string' ? JSON.parse(funnelRaw) : funnelRaw;
           row.leads_sent = funnel.fresh_sent || 0;
-          row.cc_sent    = funnel.cc_sent    || 0;
+          // Only use funnel.cc_sent as fallback if Enser sync hasn't run yet for this cohort
+          if (!row.cc_sent && funnel.cc_sent) row.cc_sent = funnel.cc_sent;
         }
       }
       return row;
