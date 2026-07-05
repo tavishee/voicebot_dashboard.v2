@@ -64,26 +64,12 @@ export async function GET(request: Request) {
     results[`retention:${cohortDate}`] = `days=${Object.keys(cohortData.grey).join(',')}`;
   }
 
-  // 4. Patch leads_sent into retention objects for cohorts without funnel rows
-  // These are cohort dates where leads were first sent but we don't have a full funnel row
-  const cohortLeadsSent: Record<string, number> = {
-    '2026-06-19': 4, '2026-06-20': 1, '2026-06-21': 4,
-    '2026-06-22': 1143, '2026-06-27': 636
-  };
-  for (const [cohortDate, leadsSent] of Object.entries(cohortLeadsSent)) {
-    const funnelKey = `funnel:row:v3:${cohortDate}`;
-    const hasFunnel = await redis.get<string>(funnelKey);
-    if (!hasFunnel) {
-      const retKey = `retention:${cohortDate}`;
-      const raw = await redis.get<string>(retKey);
-      if (raw) {
-        const row = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        row.leads_sent = leadsSent;
-        await redis.set(retKey, JSON.stringify(row));
-        await redis.expire(retKey, 60 * 60 * 24 * 120);
-        results[`retention_leads_sent:${cohortDate}`] = `leads_sent=${leadsSent}`;
-      }
-    }
+  // 4. Delete spurious retention cohorts (Jun 19-22, 27) — these appeared because
+  // retained leads in Jun 23-28 files have old Created dates, not real fresh cohorts
+  const spuriousCohorts = ['2026-06-19','2026-06-20','2026-06-21','2026-06-22','2026-06-27'];
+  for (const cohortDate of spuriousCohorts) {
+    await redis.del(`retention:${cohortDate}`);
+    results[`deleted_retention:${cohortDate}`] = 'removed spurious cohort';
   }
 
   return NextResponse.json({ success: true, count: Object.keys(results).length, results });
