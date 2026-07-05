@@ -48,7 +48,7 @@ export async function GET(request: Request) {
     const merged = {
       freshIds: ids.freshIds,
       retainedIds: ids.retainedIds,
-      allIds: [...new Set([...(ids.freshIds||[]), ...(ids.retainedIds||[]), ...(prev.allIds||[])])]
+      allIds: Array.from(new Set([...(ids.freshIds||[]), ...(ids.retainedIds||[]), ...(prev.allIds||[])]))
     };
     await redis.set(key, JSON.stringify(merged));
     await redis.expire(key, 60 * 60 * 24 * 90);
