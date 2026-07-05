@@ -128,8 +128,8 @@ async function extractLeadIds(gmail: any, messageId: string, attachmentId: strin
       if (cm) {
         const months: Record<string,string> = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
         const mon = months[cm[2].toLowerCase()];
-        const yr  = cm[3].length === 4 ? cm[3] : \`20\${cm[3]}\`;
-        if (mon) createdDate = \`\${yr}-\${mon}-\${cm[1].padStart(2,'0')}\`;
+        const yr  = cm[3].length === 4 ? cm[3] : ('20' + cm[3]);
+        if (mon) createdDate = yr + '-' + mon + '-' + cm[1].padStart(2,'0');
       }
 
       rows.push({ leadId, createdDate, connected, qualified: qual });
