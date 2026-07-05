@@ -74,6 +74,9 @@ export default function Dashboard(){
   const[ssAuthUrl,setSsAuthUrl]=useState('');
   const[retRows,setRetRows]=useState<any[]>([]);
   const[retSyncDate,setRetSyncDate]=useState(yesterdayStr());
+  const[manualCronDate,setManualCronDate]=useState(yesterdayStr());
+  const[manualCronStatus,setManualCronStatus]=useState('');
+  const[manualCronLoading,setManualCronLoading]=useState(false);
   const[retStatus,setRetStatus]=useState('');
   const[retLoading,setRetLoading]=useState(false);
   const[retMetric,setRetMetric]=useState<'connected'|'qualified'|'enser'>('connected');
@@ -104,6 +107,20 @@ export default function Dashboard(){
     } finally { setESaving(false); }
   };
 
+  const runManualCron=async()=>{
+    setManualCronLoading(true);setManualCronStatus('Running…');
+    try{
+      const secret=(window as any).__CRON_SECRET||process.env.NEXT_PUBLIC_CRON_SECRET||'';
+      const r=await fetch(`/api/cron-trigger?date=${manualCronDate}`);
+      const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      const gmail=d.gmail?.success?`✓ Gmail: ${d.gmail.fresh_sent} fresh, ${d.gmail.ret_sent} ret, ${d.gmail.cohorts_updated} cohorts updated`:`⚠ Gmail: ${d.gmail?.message||'failed'}`;
+      const enser=d.enser?.cc_sent!=null?`✓ Enser: cc_sent=${d.enser.cc_sent}`:d.enser?.skipped?`⚠ Enser: ${d.enser.skipped}`:`⚠ Enser: ${d.enser?.error||'failed'}`;
+      setManualCronStatus(`${gmail}\n${enser}`);
+      await loadData();
+    }catch(e:any){setManualCronStatus(`✗ ${e.message}`);}
+    finally{setManualCronLoading(false);}
+  };
   const runBackfill=async()=>{
     setBfLoading(true);setBfStatus('Running...');
     try{
@@ -657,6 +674,18 @@ export default function Dashboard(){
             </p>
           </div>
 
+          {/* Manual daily fetch — runs full cron (Gmail + grey retention + Enser cc_sent) for any date */}
+          <div style={card}>
+            <div style={cardT}><span style={bBot}>Auto Fetch</span> Run daily sync for a date</div>
+            <div style={{fontSize:12,color:C.text3,marginBottom:8}}>Fetches Gmail, saves grey retention, syncs Enser cc_sent — same as the nightly cron.</div>
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              <input style={inp} type="date" value={manualCronDate} onChange={e=>setManualCronDate(e.target.value)}/>
+              <button style={{...btnP,background:C.blueM}} onClick={runManualCron} disabled={manualCronLoading}>
+                {manualCronLoading?'Running…':'Fetch & Sync'}
+              </button>
+            </div>
+            {manualCronStatus&&<div style={{fontSize:12,padding:'8px 10px',marginTop:6,borderRadius:6,background:manualCronStatus.startsWith('✓')?C.greenL:C.redL,color:manualCronStatus.startsWith('✓')?C.green:C.red,whiteSpace:'pre-wrap'}}>{manualCronStatus}</div>}
+          </div>
           {/* GreyLabs backfill */}
           <div style={card}>
             <div style={cardT}><span style={bBot}>GreyLabs</span> Backfill from Gmail</div>

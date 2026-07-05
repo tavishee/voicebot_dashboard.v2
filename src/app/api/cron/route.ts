@@ -112,7 +112,11 @@ async function syncEnserCC(redis: Redis, date: string) {
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  const secretParam = new URL(request.url).searchParams.get('secret');
+  // Allow either Bearer token (Vercel cron) or secret param (manual dashboard trigger)
+  const validAuth = authHeader === `Bearer ${process.env.CRON_SECRET}`
+    || secretParam === process.env.CRON_SECRET;
+  if (!validAuth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
