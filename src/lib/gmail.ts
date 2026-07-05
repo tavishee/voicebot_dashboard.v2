@@ -83,51 +83,66 @@ async function extractLeadIds(gmail: any, messageId: string, attachmentId: strin
   const buffer = Buffer.from(att.data.data, 'base64');
   const wb = XLSX.read(buffer, { type: 'buffer' });
 
-  function getIdsFromSheet(sheetName: string): string[] {
+  type SheetRow = { leadId: string; createdDate: string; connected: number; qualified: string };
+
+  function getRowsFromSheet(sheetName: string): { ids: string[]; rows: SheetRow[] } {
     const found = wb.SheetNames.find(n => n.toLowerCase().includes(sheetName.toLowerCase()));
     if (!found) {
       console.log(`Sheet not found matching "${sheetName}". Available: ${wb.SheetNames.join(', ')}`);
-      return [];
+      return { ids: [], rows: [] };
     }
     const ws = wb.Sheets[found];
-    const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-    if (rows.length < 2) return [];
+    const rawRows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    if (rawRows.length < 2) return { ids: [], rows: [] };
 
-    // Search first 10 rows for "Lead ID" header (it's in row 5, not row 1)
     let headerRowIdx = -1;
-    let col = -1;
-    let qualifiedCol = -1;
-    for (let i = 0; i < Math.min(rows.length, 10); i++) {
-      const headers = rows[i].map((h: any) => String(h || '').trim().toLowerCase());
-      const found2 = headers.findIndex(h => h === 'lead id' || h === 'lead_id' || h === 'leadid');
-      if (found2 !== -1) {
+    let leadIdCol = -1, createdCol = -1, connectedCol = -1, qualifiedCol = -1;
+    for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+      const headers = rawRows[i].map((h: any) => String(h || '').trim().toLowerCase());
+      const li = headers.findIndex(h => h === 'lead id' || h === 'lead_id' || h === 'leadid');
+      if (li !== -1) {
         headerRowIdx = i;
-        col = found2;
+        leadIdCol    = li;
+        createdCol   = headers.findIndex(h => h === 'created');
+        connectedCol = headers.findIndex(h => h === 'connected');
         qualifiedCol = headers.findIndex(h => h === 'qualified');
         break;
       }
     }
-    if (col === -1) {
-      console.log(`"Lead ID" column not found in first 10 rows of sheet "${found}"`);
-      return [];
+    if (leadIdCol === -1 || qualifiedCol === -1) return { ids: [], rows: [] };
+
+    const dataRows = rawRows.slice(headerRowIdx + 1).filter(r => r[leadIdCol]);
+    const ids: string[] = [];
+    const rows: SheetRow[] = [];
+
+    for (const r of dataRows) {
+      const leadId   = String(r[leadIdCol] ?? '').trim().replace(/\.0$/, '');
+      const qual     = String(r[qualifiedCol] || '').trim().toUpperCase();
+      const created  = createdCol >= 0 ? String(r[createdCol] || '').trim() : '';
+      const connected = connectedCol >= 0 ? Number(r[connectedCol] || 0) : 0;
+      if (!leadId || leadId === 'undefined' || leadId === 'null' || leadId === 'None') continue;
+
+      // Parse created date "22-Jun-26" -> "2026-06-22"
+      let createdDate = '';
+      const cm = created.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
+      if (cm) {
+        const months: Record<string,string> = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+        const mon = months[cm[2].toLowerCase()];
+        const yr  = cm[3].length === 4 ? cm[3] : \`20\${cm[3]}\`;
+        if (mon) createdDate = \`\${yr}-\${mon}-\${cm[1].padStart(2,'0')}\`;
+      }
+
+      rows.push({ leadId, createdDate, connected, qualified: qual });
+      if (qual === 'YES') ids.push(leadId);
     }
 
-    if (qualifiedCol === -1) {
-      console.log(`"Qualified" column not found in sheet "${found}"`);
-      return [];
-    }
-
-    const qualifiedIds = rows.slice(headerRowIdx + 1)
-      .filter(r => String(r[qualifiedCol] || '').trim().toUpperCase() === 'YES')
-      .map(r => String(r[col] ?? '').trim().replace(/\.0$/, ''))
-      .filter(id => id && id !== 'undefined' && id !== 'null' && id !== 'None');
-    return Array.from(new Set(qualifiedIds));
+    return { ids: Array.from(new Set(ids)), rows };
   }
 
-  const freshIds    = getIdsFromSheet('Fresh');
-  const retainedIds = getIdsFromSheet('Retained');
-  console.log(`Lead IDs — Fresh: ${freshIds.length}, Retained: ${retainedIds.length}`);
-  return { freshIds, retainedIds };
+  const fresh    = getRowsFromSheet('Fresh');
+  const retained = getRowsFromSheet('Retained');
+  console.log(`Lead IDs — Fresh: ${fresh.ids.length}, Retained: ${retained.ids.length}`);
+  return { freshIds: fresh.ids, retainedIds: retained.ids, freshRows: fresh.rows, retainedRows: retained.rows };
 }
 
 export async function fetchGreylabsData(dateStr: string) {
@@ -154,6 +169,8 @@ export async function fetchGreylabsData(dateStr: string) {
 
   let freshIds: string[] = [];
   let retainedIds: string[] = [];
+  let freshRows: any[] = [];
+  let retainedRows: any[] = [];
   const parts = msg.data.payload?.parts || [];
   const attachment = findXlsxAttachment(parts);
   if (attachment) {
@@ -161,9 +178,11 @@ export async function fetchGreylabsData(dateStr: string) {
       const ids = await extractLeadIds(gmail, messages[0].id!, attachment.attachmentId);
       freshIds = ids.freshIds;
       retainedIds = ids.retainedIds;
+      freshRows = ids.freshRows || [];
+      retainedRows = ids.retainedRows || [];
     } catch (e: any) { console.log('Could not extract Lead IDs:', e.message); }
   } else {
     console.log('No xlsx attachment found in email');
   }
-  return { ...funnelData, freshIds, retainedIds };
+  return { ...funnelData, freshIds, retainedIds, freshRows, retainedRows };
 }
