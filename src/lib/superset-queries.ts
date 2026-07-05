@@ -1,3 +1,25 @@
+// Simple cc_sent/attempted/connected query — fast, no joins
+export function ccMetricsQuery(date: string, nextDate: string) { return `
+SELECT
+    COUNT(*) AS cc_sent,
+    SUM(CASE WHEN COALESCE(disposition1, '') <> ''
+      OR COALESCE(disposition2, '') <> '' OR COALESCE(disposition3, '') <> ''
+      THEN 1 ELSE 0 END) AS cc_attempted,
+    SUM(CASE WHEN
+      IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration, ':', 1), '') AS INT), 0) * 3600 +
+      IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration, ':', 2), '') AS INT), 0) * 60 +
+      IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration, ':', 3), '') AS INT), 0) > 0
+      THEN 1 ELSE 0 END) AS cc_connected
+FROM glue_catalog.recent_search_partition.enser_callback_data
+WHERE (source = 'enser' OR source IS NULL)
+  AND customer_id <> 'NA'
+  AND date >= DATE_FORMAT(CAST('${date}' AS DATE), '%Y%m%d')
+  AND date < DATE_FORMAT(CAST('${nextDate}' AS DATE), '%Y%m%d')
+  AND created_on >= '${date} 00:00:00'
+  AND created_on < '${nextDate} 00:00:00'
+`; }
+
+// Full attribution query for cc_converted — only run when needed
 export function combinedQuery(date: string, nextDate: string) { return `
 WITH proposal_dedup AS (
     SELECT proposal_id, vehicle_type, created_by, owned_by, coverage_type
@@ -123,5 +145,4 @@ SELECT
       THEN 1 ELSE 0 END) AS cc_connected,
     COUNT(DISTINCT CASE WHEN cv.customer_id IS NOT NULL THEN r.customer_id END) AS cc_converted
 FROM raw_calls r
-LEFT JOIN conversions cv ON r.customer_id = cv.customer_id`;
-}
+LEFT JOIN conversions cv ON r.customer_id = cv.customer_id`; }
