@@ -117,7 +117,7 @@ export default function Dashboard(){
       const gmail=d.gmail?.success?`✓ Gmail: ${d.gmail.fresh_sent} fresh, ${d.gmail.ret_sent} ret, ${d.gmail.cohorts_updated} cohorts updated`:`⚠ Gmail: ${d.gmail?.message||'failed'}`;
       const enser=d.enser?.cc_sent!=null?`✓ Enser: cc_sent=${d.enser.cc_sent}`:d.enser?.skipped?`⚠ Enser: ${d.enser.skipped}`:`⚠ Enser: ${d.enser?.error||'failed'}`;
       setManualCronStatus(`${gmail}\n${enser}`);
-      await loadData();
+      fetch('/api/data').then(r=>r.json()).then(d=>setRows(d.rows||[]));
     }catch(e:any){setManualCronStatus(`✗ ${e.message}`);}
     finally{setManualCronLoading(false);}
   };
