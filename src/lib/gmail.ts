@@ -51,8 +51,6 @@ function extractNumber(label: string, text: string): number {
 }
 
 function parseFunnelSection(section: string) {
-  // Debug: log first 300 chars of section to see what's being parsed
-  console.log('parseFunnelSection input:', section.slice(0, 300));
   return {
     sent:      extractNumber('Total Leads', section),
     dialled:   extractNumber('Total Dialed', section),
