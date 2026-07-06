@@ -71,6 +71,23 @@ export async function GET(request: Request) {
     results[`deleted:${d}`] = 'removed';
   }
 
+  // 5b. Reset corrupted Jul 01-05 funnel rows — zero out accumulated grey/ret counts
+  // These got corrupted by repeated startup syncs accumulating values
+  const corruptedDates = ['2026-07-01','2026-07-02','2026-07-03','2026-07-04','2026-07-05'];
+  for (const d of corruptedDates) {
+    const key = `funnel:row:v3:${d}`;
+    const raw = await redis.get<string>(key);
+    if (!raw) continue;
+    const row: any = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    // If fresh_sent looks corrupted (>50000 for a single day), reset greylabs fields
+    if ((row.fresh_sent || 0) > 50000 || (row.ret_sent || 0) > 100000) {
+      const cc = { cc_sent: row.cc_sent||0, cc_attempted: row.cc_attempted||0, cc_connected: row.cc_connected||0, cc_converted: row.cc_converted||0 };
+      const clean = { date: d, fresh_sent:0, fresh_dialled:0, fresh_connected:0, fresh_qualified:0, fresh_high:0, fresh_medium:0, fresh_low:0, fresh_callback:0, ret_sent:0, ret_dialled:0, ret_connected:0, ret_qualified:0, ret_high:0, ret_medium:0, ret_low:0, ret_callback:0, ...cc };
+      await redis.set(key, JSON.stringify(clean));
+      results[`reset:${d}`] = `was fresh=${row.fresh_sent} ret=${row.ret_sent} — reset to 0`;
+    }
+  }
+
   // 5. Fix leads_sent for Jul 01-05 retention rows
   for (const d of ['2026-07-01','2026-07-02','2026-07-03','2026-07-04','2026-07-05']) {
     const retKey = `retention:${d}`;
