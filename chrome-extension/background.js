@@ -51,7 +51,28 @@ async function runQueryInSupersetTab(sql) {
   return result.data;
 }
 
+// Use long-lived port connection to avoid 5-second message timeout
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'SUPERSET_QUERY') return;
+  port.onMessage.addListener(async (message) => {
+    const id = message.id;
+    if (message?.type !== 'RUN_QUERY' || typeof message.sql !== 'string') {
+      port.postMessage({ id, success: false, error: 'Invalid message' });
+      return;
+    }
+    try {
+      const sql = validateQuery(message.sql);
+      const data = await runQueryInSupersetTab(sql);
+      port.postMessage({ id, success: true, data });
+    } catch (error) {
+      port.postMessage({ id, success: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+});
+
+// Keep backward compat with onMessage for PING
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'PING') { sendResponse({ success: true, version: '2.0' }); return; }
   if (message?.type !== 'RUN_QUERY' || typeof message.sql !== 'string') return;
   try {
     const sql = validateQuery(message.sql);
