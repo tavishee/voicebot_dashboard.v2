@@ -286,7 +286,7 @@ export default function Dashboard(){
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill or Fetch & Sync first.`);setSsLoading(false);return;}
         // Step 1: Fast query — just count lead IDs in Enser callback data (5-10 sec)
         setSsStatus(`Step 1/2: Getting CC received for ${allIds.length} leads…`);
-        const fastSql=receivedQuery(nextDate,allIds);
+        const fastSql=receivedQuery(ssDate,allIds);
         const fastRows=await extensionCall('RUN_QUERY',{sql:fastSql});
         const ccSent=Number(fastRows?.[0]?.cc_sent)||0;
         const ccAttempted=Number(fastRows?.[0]?.cc_attempted)||0;
