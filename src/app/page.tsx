@@ -106,10 +106,15 @@ export default function Dashboard(){
     const runStartup = async () => {
       const yesterday = yesterdayStr();
 
-      // Step 1: Gmail fetch for yesterday
+      // Step 1: Gmail fetch for yesterday — only if data is missing
       try{
-        setStartupStatus(`Syncing yesterday's data (${yesterday})…`);
-        await fetch(`/api/cron-trigger?date=${yesterday}`);
+        const checkRes = await fetch('/api/data');
+        const checkJson = await checkRes.json();
+        const yesterdayRow = (checkJson.rows||[]).find((r:any)=>r.date===yesterday);
+        if(!yesterdayRow || !yesterdayRow.fresh_sent || yesterdayRow.fresh_sent === 0){
+          setStartupStatus(`Fetching yesterday's data (${yesterday})…`);
+          await fetch(`/api/cron-trigger?date=${yesterday}`);
+        }
       }catch(e){ /* silent */ }
 
       // Step 2: Reload data to see what's missing cc_sent

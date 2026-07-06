@@ -84,7 +84,8 @@ export async function GET(request: Request) {
         const row: any = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : { cohort_date: cohort, grey: {}, enser: {} };
         if (!row.grey)  row.grey  = {};
         if (!row.enser) row.enser = {};
-        for (const [day, counts] of Object.entries(greyDays)) { row.grey[day] = counts; }
+        // Overwrite entire grey object — don't merge with existing to prevent accumulation
+        row.grey = { ...row.grey, ...greyDays };
         const fRaw = await redis.get<string>(`funnel:row:v3:${cohort}`);
         if (fRaw) { const fn: any = typeof fRaw === 'string' ? JSON.parse(fRaw) : fRaw; row.leads_sent = fn.fresh_sent||0; }
         await redis.set(retKey, JSON.stringify(row));
