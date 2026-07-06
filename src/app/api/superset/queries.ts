@@ -154,33 +154,42 @@ FROM raw_calls r
 LEFT JOIN conversions cv ON r.customer_id = cv.customer_id`;
 }
 
-export function receivedQuery(nextDate: string, leadIds: string[]) {
-  if (!leadIds.length) return `SELECT 0 AS cc_sent`;
+export function receivedQuery(date: string, leadIds: string[]) {
+  if (!leadIds.length) return `SELECT 0 AS cc_sent, 0 AS cc_attempted, 0 AS cc_connected`;
 
   const idChunks: string[][] = [];
   for (let i = 0; i < leadIds.length; i += 1000) idChunks.push(leadIds.slice(i, i + 1000));
   const qualifiedLeadSources = idChunks.map(chunk => {
-    const values = chunk.map(id => `('${id.replace(/'/g, "''")}')`).join(', ');
+    const values = chunk.map((id: string) => `('${id.replace(/'/g, "''")}')`).join(', ');
     return `SELECT CAST(id AS VARCHAR) AS lead_id FROM (VALUES ${values}) AS t(id)`;
   }).join('\n    UNION ALL\n    ');
+
+  const d = new Date(date + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 1);
+  const nextDate = d.toISOString().slice(0, 10);
 
   return `
 WITH qualified_leads AS (
     ${qualifiedLeadSources}
 )
-SELECT COUNT(DISTINCT CAST(customer_id AS VARCHAR)) AS cc_sent
+SELECT
+  COUNT(DISTINCT CAST(customer_id AS VARCHAR)) AS cc_sent,
+  COUNT(DISTINCT CASE WHEN COALESCE(disposition1,'') <> '' OR COALESCE(disposition2,'') <> '' OR COALESCE(disposition3,'') <> '' THEN CAST(customer_id AS VARCHAR) END) AS cc_attempted,
+  COUNT(DISTINCT CASE WHEN
+    IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration,':',1),'') AS INT),0)*3600+
+    IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration,':',2),'') AS INT),0)*60+
+    IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration,':',3),'') AS INT),0)>0
+    THEN CAST(customer_id AS VARCHAR) END) AS cc_connected
 FROM glue_catalog.recent_search_partition.enser_callback_data
 WHERE (source = 'enser' OR source IS NULL)
   AND customer_id <> 'NA'
-  AND date >= DATE_FORMAT(DATE_SUB(CAST('${nextDate}' AS DATE), INTERVAL 110 DAY), '%Y%m%d')
+  AND date >= DATE_FORMAT(CAST('${date}' AS DATE), '%Y%m%d')
   AND date < DATE_FORMAT(CAST('${nextDate}' AS DATE), '%Y%m%d')
-  AND created_on >= DATE_SUB(CAST('${nextDate}' AS DATE), INTERVAL 110 DAY)
-  AND created_on < CAST('${nextDate}' AS DATE)
+  AND created_on >= '${date} 00:00:00'
+  AND created_on < '${nextDate} 00:00:00'
   AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)`;
 }
 
-// Fast cc_sent query — returns array of queries to run in chunks of 200 IDs
-// Run each query, sum results client-side to avoid StarRocks IN clause limits
 export function ccMetricsQueries(date: string, nextDate: string, leadIds: string[]): string[] {
   const base = `
 SELECT
