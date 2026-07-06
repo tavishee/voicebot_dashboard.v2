@@ -72,6 +72,7 @@ function parseEmailBody(body: string) {
   const retainedSection = retainedIdx > -1 ? text.slice(retainedIdx, retainedIdx + 2000) : null;
   const fresh    = parseFunnelSection(freshSection);
   const retained = retainedSection ? parseFunnelSection(retainedSection) : null;
+  console.log(`Parsed funnel — fresh.sent=${fresh.sent} retained.sent=${retained?.sent}`);
   if (!fresh.sent) { console.log('Could not parse Fresh Lead Funnel numbers'); return null; }
   return { fresh, retained };
 }
