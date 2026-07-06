@@ -120,7 +120,7 @@ export default function Dashboard(){
       // Find dates missing cc_sent, last 14 days only, excluding today
       const today = todayStr();
       const missingCC = allRows
-        .filter((r:any) => r.date < today && (!r.cc_sent || r.cc_sent === 0))
+        .filter((r:any) => r.date < today && r.date >= '2026-06-23' && (!r.cc_sent || r.cc_sent === 0))
         .map((r:any) => r.date)
         .sort().slice(-14);
 
