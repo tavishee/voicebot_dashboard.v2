@@ -97,53 +97,65 @@ export default function Dashboard(){
   };
   useEffect(()=>{loadRetention();},[]);
 
-  // Startup sync — runs on page load, fetches missing Gmail data + Enser cc_sent
+  // Startup sync — runs on page load
+  // 1. Gmail fetch for yesterday (today's data not available until EOD)
+  // 2. Sync cc_sent for all dates missing it in last 14 days
+  // 3. If Superset auth needed, show banner asking user to log in
   useEffect(()=>{
     if(startupDone) return;
     setStartupDone(true);
-    const today = todayStr();
-    const yesterday = yesterdayStr();
 
     const runStartup = async () => {
-      // 1. Run Gmail fetch for today and yesterday if missing
-      for(const d of [yesterday, today]){
-        try{
-          setStartupStatus(`Fetching Gmail data for ${d}…`);
-          await fetch(`/api/cron-trigger?date=${d}`);
-        }catch(e){ /* silent */ }
+      const yesterday = yesterdayStr();
+
+      // Step 1: Gmail fetch for yesterday
+      try{
+        setStartupStatus(`Syncing yesterday's data (${yesterday})…`);
+        await fetch(`/api/cron-trigger?date=${yesterday}`);
+      }catch(e){ /* silent */ }
+
+      // Step 2: Reload data to see what's missing cc_sent
+      const dataRes = await fetch('/api/data');
+      const dataJson = await dataRes.json();
+      const allRows: any[] = dataJson.rows || [];
+
+      // Find dates missing cc_sent, last 14 days only, excluding today
+      const today = todayStr();
+      const missingCC = allRows
+        .filter((r:any) => r.date < today && (!r.cc_sent || r.cc_sent === 0))
+        .map((r:any) => r.date)
+        .sort().slice(-14);
+
+      if(missingCC.length === 0){
+        setStartupStatus('');
+        load(); loadRetention();
+        return;
       }
 
-      // 2. Check Superset auth
+      // Step 3: Check Superset auth before trying cc_sent sync
       try{
-        setStartupStatus('Checking Superset auth…');
+        setStartupStatus('Checking Superset connection…');
         const authRes = await fetch('/api/superset/auth');
         const authData = await authRes.json();
-        if(!authData.authenticated && authData.authUrl){
-          setStartupStatus(`⚠ Superset login needed — opening in new tab…`);
-          // Open Superset login in new tab, don't redirect away from dashboard
-          window.open(authData.authUrl, '_blank');
-          setStartupStatus('⚠ Log in to Superset in the new tab, then click "Fetch & Sync" to sync Enser data.');
+
+        if(!authData.authenticated){
+          // Show persistent banner asking user to log in
+          setStartupStatus(`⚠ ${missingCC.length} date(s) missing Enser data (${missingCC.slice(-3).join(', ')}${missingCC.length>3?'…':''}). Log in to Superset to sync automatically.`);
           load(); loadRetention();
           return;
         }
 
-        // 3. If authenticated, run cc_sent for any dates in last 7 days missing cc_sent
-        const dataRes = await fetch('/api/data');
-        const dataJson = await dataRes.json();
-        const missingCC: string[] = (dataJson.rows||[])
-          .filter((r:any) => !r.cc_sent || r.cc_sent === 0)
-          .map((r:any) => r.date)
-          .slice(-7); // max 7 dates
-
+        // Step 4: Authenticated — sync cc_sent for each missing date
         for(const d of missingCC){
-          setStartupStatus(`Syncing Enser cc_sent for ${d}…`);
+          setStartupStatus(`Syncing Enser data for ${d}… (${missingCC.indexOf(d)+1}/${missingCC.length})`);
           try{
             await fetch(`/api/cron-trigger?date=${d}`);
           }catch(e){ /* silent */ }
         }
-
         setStartupStatus('');
-      }catch(e){ setStartupStatus(''); }
+      }catch(e){
+        setStartupStatus('⚠ Could not reach Superset. Open dashboard on Paytm WiFi to sync Enser data.');
+      }
 
       load(); loadRetention();
     };
@@ -152,53 +164,65 @@ export default function Dashboard(){
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
-  // Startup sync — runs on page load, fetches missing Gmail data + Enser cc_sent
+  // Startup sync — runs on page load
+  // 1. Gmail fetch for yesterday (today's data not available until EOD)
+  // 2. Sync cc_sent for all dates missing it in last 14 days
+  // 3. If Superset auth needed, show banner asking user to log in
   useEffect(()=>{
     if(startupDone) return;
     setStartupDone(true);
-    const today = todayStr();
-    const yesterday = yesterdayStr();
 
     const runStartup = async () => {
-      // 1. Run Gmail fetch for today and yesterday if missing
-      for(const d of [yesterday, today]){
-        try{
-          setStartupStatus(`Fetching Gmail data for ${d}…`);
-          await fetch(`/api/cron-trigger?date=${d}`);
-        }catch(e){ /* silent */ }
+      const yesterday = yesterdayStr();
+
+      // Step 1: Gmail fetch for yesterday
+      try{
+        setStartupStatus(`Syncing yesterday's data (${yesterday})…`);
+        await fetch(`/api/cron-trigger?date=${yesterday}`);
+      }catch(e){ /* silent */ }
+
+      // Step 2: Reload data to see what's missing cc_sent
+      const dataRes = await fetch('/api/data');
+      const dataJson = await dataRes.json();
+      const allRows: any[] = dataJson.rows || [];
+
+      // Find dates missing cc_sent, last 14 days only, excluding today
+      const today = todayStr();
+      const missingCC = allRows
+        .filter((r:any) => r.date < today && (!r.cc_sent || r.cc_sent === 0))
+        .map((r:any) => r.date)
+        .sort().slice(-14);
+
+      if(missingCC.length === 0){
+        setStartupStatus('');
+        load(); loadRetention();
+        return;
       }
 
-      // 2. Check Superset auth
+      // Step 3: Check Superset auth before trying cc_sent sync
       try{
-        setStartupStatus('Checking Superset auth…');
+        setStartupStatus('Checking Superset connection…');
         const authRes = await fetch('/api/superset/auth');
         const authData = await authRes.json();
-        if(!authData.authenticated && authData.authUrl){
-          setStartupStatus(`⚠ Superset login needed — opening in new tab…`);
-          // Open Superset login in new tab, don't redirect away from dashboard
-          window.open(authData.authUrl, '_blank');
-          setStartupStatus('⚠ Log in to Superset in the new tab, then click "Fetch & Sync" to sync Enser data.');
+
+        if(!authData.authenticated){
+          // Show persistent banner asking user to log in
+          setStartupStatus(`⚠ ${missingCC.length} date(s) missing Enser data (${missingCC.slice(-3).join(', ')}${missingCC.length>3?'…':''}). Log in to Superset to sync automatically.`);
           load(); loadRetention();
           return;
         }
 
-        // 3. If authenticated, run cc_sent for any dates in last 7 days missing cc_sent
-        const dataRes = await fetch('/api/data');
-        const dataJson = await dataRes.json();
-        const missingCC: string[] = (dataJson.rows||[])
-          .filter((r:any) => !r.cc_sent || r.cc_sent === 0)
-          .map((r:any) => r.date)
-          .slice(-7); // max 7 dates
-
+        // Step 4: Authenticated — sync cc_sent for each missing date
         for(const d of missingCC){
-          setStartupStatus(`Syncing Enser cc_sent for ${d}…`);
+          setStartupStatus(`Syncing Enser data for ${d}… (${missingCC.indexOf(d)+1}/${missingCC.length})`);
           try{
             await fetch(`/api/cron-trigger?date=${d}`);
           }catch(e){ /* silent */ }
         }
-
         setStartupStatus('');
-      }catch(e){ setStartupStatus(''); }
+      }catch(e){
+        setStartupStatus('⚠ Could not reach Superset. Open dashboard on Paytm WiFi to sync Enser data.');
+      }
 
       load(); loadRetention();
     };
@@ -426,6 +450,11 @@ export default function Dashboard(){
     <>
     {startupStatus&&<div style={{position:'fixed',top:0,left:0,right:0,zIndex:1000,background:startupStatus.startsWith('⚠')?'#fffbe6':'#e8f5e9',borderBottom:'1px solid',borderColor:startupStatus.startsWith('⚠')?'#ffe58f':'#a5d6a7',padding:'8px 16px',fontSize:12,color:startupStatus.startsWith('⚠')?'#7c4a00':'#2e7d32',display:'flex',alignItems:'center',gap:8}}>
       <span>{startupStatus}</span>
+      {startupStatus.startsWith('⚠')&&startupStatus.includes('Log in')&&<button onClick={async()=>{
+        const r=await fetch('/api/superset/auth');const d=await r.json();
+        if(d.authUrl)window.open(d.authUrl,'_blank');
+        setStartupStatus('Log in to Superset in the new tab, then refresh this page to auto-sync.');
+      }} style={{marginLeft:8,padding:'3px 10px',background:'#fa8c16',border:'none',borderRadius:4,color:'#fff',cursor:'pointer',fontSize:11,fontWeight:600}}>Log in to Superset</button>}
       <button onClick={()=>setStartupStatus('')} style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',fontSize:14,color:'inherit'}}>✕</button>
     </div>}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;background:${C.bg};color:${C.text}}`}</style>
