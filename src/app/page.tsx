@@ -284,10 +284,27 @@ export default function Dashboard(){
         ].map((id:any)=>String(id).trim()).filter(Boolean)));
         const allIds:string[] = qualIds.length > 0 ? qualIds : Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean)));
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill or Fetch & Sync first.`);setSsLoading(false);return;}
-        setSsStatus(`Matching ${allIds.length} qualified leads and calculating CC conversions…`);
-        const sql=combinedQuery(ssDate,nextDate,allIds);
-        const queryRows=await extensionCall('RUN_QUERY',{sql});
-        const c={cc_sent:Number(queryRows?.[0]?.cc_sent)||0,cc_attempted:Number(queryRows?.[0]?.cc_attempted)||0,cc_connected:Number(queryRows?.[0]?.cc_connected)||0,cc_converted:Number(queryRows?.[0]?.cc_converted)||0,cc_churn:0};
+        // Step 1: Fast query — just count lead IDs in Enser callback data (5-10 sec)
+        setSsStatus(`Step 1/2: Getting CC received for ${allIds.length} leads…`);
+        const fastSql=receivedQuery(nextDate,allIds);
+        const fastRows=await extensionCall('RUN_QUERY',{sql:fastSql});
+        const ccSent=Number(fastRows?.[0]?.cc_sent)||0;
+        const ccAttempted=Number(fastRows?.[0]?.cc_attempted)||0;
+        const ccConnected=Number(fastRows?.[0]?.cc_connected)||0;
+        // Save cc_sent immediately so it shows even if attribution times out
+        await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,cc_sent:ccSent,cc_attempted:ccAttempted,cc_connected:ccConnected,cc_converted:0,cc_churn:0,cc_conversion_on_connect:0})});
+        setSsStatus(`✓ Step 1 done: ${ccSent} received · ${ccAttempted} attempted · ${ccConnected} connected. Running attribution…`);
+        // Step 2: Full attribution for conversions (slow — may timeout)
+        let ccConverted=0;
+        try{
+          const convSql=combinedQuery(ssDate,nextDate,allIds);
+          const queryRows=await extensionCall('RUN_QUERY',{sql:convSql});
+          ccConverted=Number(queryRows?.[0]?.cc_converted)||0;
+        }catch(e:any){
+          setSsStatus(`✓ ${ssDate}: ${ccSent} received · ${ccAttempted} attempted · ${ccConnected} connected · conversions timed out (re-sync to retry)`);
+          setSsLoading(false);fetch('/api/data').then(r=>r.json()).then(d=>setRows(d.rows||[]));return;
+        }
+        const c={cc_sent:ccSent,cc_attempted:ccAttempted,cc_connected:ccConnected,cc_converted:ccConverted,cc_churn:0};
         const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
         setSsAuthUrl('');setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);load();return;
