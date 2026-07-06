@@ -4,8 +4,13 @@ const STARROCKS_DATABASE_ID = 11;
 function validateQuery(sql) {
   const normalized = sql.trim();
   const forbidden = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|GRANT|REVOKE|CALL)\b/i;
-  if ((!/^WITH\b/i.test(normalized) && !/^SELECT\b/i.test(normalized)) || forbidden.test(normalized)
-      || (!normalized.includes('recent_search.enser_callback_data') && !normalized.includes('glue_catalog.recent_search_partition.enser_callback_data'))) {
+  const allowedTables = [
+    'recent_search.enser_callback_data',
+    'glue_catalog.recent_search_partition.enser_callback_data',
+    'glue_catalog.motor_proposal_3',
+  ];
+  const hasAllowedTable = allowedTables.some(t => normalized.includes(t));
+  if ((!/^WITH\b/i.test(normalized) && !/^SELECT\b/i.test(normalized)) || forbidden.test(normalized) || !hasAllowedTable) {
     throw new Error('Query rejected by the Voicebot Superset Bridge allowlist');
   }
   return normalized;
