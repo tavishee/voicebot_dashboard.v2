@@ -178,3 +178,36 @@ WHERE (source = 'enser' OR source IS NULL)
   AND created_on < CAST('${nextDate}' AS DATE)
   AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)`;
 }
+
+// Fast cc_sent/attempted/connected query filtered to qualified lead IDs
+export function ccMetricsQuery(date: string, nextDate: string, leadIds: string[] = []) {
+  let idFilter = '';
+  if (leadIds.length > 0) {
+    const chunks: string[][] = [];
+    for (let i = 0; i < leadIds.length; i += 500) chunks.push(leadIds.slice(i, i + 500));
+    const unionParts = chunks.map(chunk => {
+      const vals = chunk.map(id => `('${id.replace(/'/g, "''")}')`).join(',');
+      return `SELECT CAST(id AS VARCHAR) AS lead_id FROM (VALUES ${vals}) AS t(id)`;
+    }).join(' UNION ALL ');
+    idFilter = `AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM (${unionParts}) AS all_ids)`;
+  }
+  return `
+SELECT
+    COUNT(*) AS cc_sent,
+    SUM(CASE WHEN COALESCE(disposition1, '') <> ''
+      OR COALESCE(disposition2, '') <> '' OR COALESCE(disposition3, '') <> ''
+      THEN 1 ELSE 0 END) AS cc_attempted,
+    SUM(CASE WHEN
+      IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration, ':', 1), '') AS INT), 0) * 3600 +
+      IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration, ':', 2), '') AS INT), 0) * 60 +
+      IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration, ':', 3), '') AS INT), 0) > 0
+      THEN 1 ELSE 0 END) AS cc_connected
+FROM glue_catalog.recent_search_partition.enser_callback_data
+WHERE (source = 'enser' OR source IS NULL)
+  AND customer_id <> 'NA'
+  AND date >= DATE_FORMAT(CAST('${date}' AS DATE), '%Y%m%d')
+  AND date < DATE_FORMAT(CAST('${nextDate}' AS DATE), '%Y%m%d')
+  AND created_on >= '${date} 00:00:00'
+  AND created_on < '${nextDate} 00:00:00'
+  ${idFilter}
+`;}

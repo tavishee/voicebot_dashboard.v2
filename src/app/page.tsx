@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip } from 'chart.js';
 import type { FunnelRow } from '@/lib/storage';
-import { combinedQuery, receivedQuery } from '@/app/api/superset/queries';
+import { combinedQuery, receivedQuery, ccMetricsQuery } from '@/app/api/superset/queries';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
 const SUPERSET_LOGIN = 'https://insurance-analytic-platform.paytminsurance.co.in/superset/welcome/';
@@ -355,12 +355,25 @@ export default function Dashboard(){
           allIds=Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean))) as string[];
         }
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill first.`);setSsLoading(false);return;}
-        setSsStatus(`Matching ${allIds.length} qualified leads and calculating CC conversions…`);
-        const sql=combinedQuery(ssDate,nextDate,allIds);
-        const queryRows=await extensionCall('RUN_QUERY',{sql});
-        setSsStatus('Calculating historical leads received…');
-        const receivedRows=await extensionCall('RUN_QUERY',{sql:receivedQuery(nextDate,allIds)});
-        const c={cc_sent:Number(receivedRows?.[0]?.cc_sent)||Number(queryRows?.[0]?.cc_sent)||0,cc_attempted:Number(queryRows?.[0]?.cc_attempted)||0,cc_connected:Number(queryRows?.[0]?.cc_connected)||0,cc_converted:Number(queryRows?.[0]?.cc_converted)||0,cc_churn:Number(queryRows?.[0]?.cc_churn)||0};
+        // Step 1: Fast cc_sent/attempted/connected query filtered to qualified leads
+        setSsStatus(`Getting Enser metrics for ${allIds.length} qualified leads…`);
+        const ccSql=ccMetricsQuery(ssDate,nextDate,allIds);
+        const ccRows=await extensionCall('RUN_QUERY',{sql:ccSql});
+        const ccSent=Number(ccRows?.[0]?.cc_sent)||0;
+        const ccAttempted=Number(ccRows?.[0]?.cc_attempted)||0;
+        const ccConnected=Number(ccRows?.[0]?.cc_connected)||0;
+        // Step 2: Attribution query for conversions (may be slow)
+        let ccConverted=0;
+        try{
+          setSsStatus(`cc_sent=${ccSent} · Getting conversions (this may take a minute)…`);
+          const convSql=combinedQuery(ssDate,nextDate,allIds);
+          const queryRows=await extensionCall('RUN_QUERY',{sql:convSql});
+          ccConverted=Number(queryRows?.[0]?.cc_converted)||0;
+        }catch(convErr:any){
+          setSsStatus(`cc_sent=${ccSent} · Conversion query timed out — saving cc_sent only`);
+          await new Promise(r=>setTimeout(r,2000));
+        }
+        const c={cc_sent:ccSent,cc_attempted:ccAttempted,cc_connected:ccConnected,cc_converted:ccConverted,cc_churn:0};
         const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
         setSsAuthUrl('');setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);load();return;
