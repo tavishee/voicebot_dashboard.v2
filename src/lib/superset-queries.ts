@@ -1,5 +1,18 @@
-// Simple cc_sent/attempted/connected query — fast, no joins
-export function ccMetricsQuery(date: string, nextDate: string) { return `
+// cc_sent/attempted/connected filtered to bot-qualified lead IDs only
+// leadIds: array of qualified lead IDs from that date's GreyLabs report
+export function ccMetricsQuery(date: string, nextDate: string, leadIds: string[] = []) {
+  // Build lead ID filter — chunk into 500-ID UNION ALL blocks to avoid StarRocks 10k limit
+  let idFilter = '';
+  if (leadIds.length > 0) {
+    const chunks: string[][] = [];
+    for (let i = 0; i < leadIds.length; i += 500) chunks.push(leadIds.slice(i, i + 500));
+    const unionParts = chunks.map(chunk => {
+      const vals = chunk.map(id => `('${id.replace(/'/g, "''")}')`).join(',');
+      return `SELECT CAST(id AS VARCHAR) AS lead_id FROM (VALUES ${vals}) AS t(id)`;
+    }).join(' UNION ALL ');
+    idFilter = `AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM (${unionParts}) AS all_ids)`;
+  }
+  return `
 SELECT
     COUNT(*) AS cc_sent,
     SUM(CASE WHEN COALESCE(disposition1, '') <> ''
@@ -17,6 +30,7 @@ WHERE (source = 'enser' OR source IS NULL)
   AND date < DATE_FORMAT(CAST('${nextDate}' AS DATE), '%Y%m%d')
   AND created_on >= '${date} 00:00:00'
   AND created_on < '${nextDate} 00:00:00'
+  ${idFilter}
 `; }
 
 // Full attribution query for cc_converted — only run when needed

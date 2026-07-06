@@ -108,7 +108,11 @@ export async function GET(request: Request) {
       } else {
         const next = new Date(date+'T00:00:00Z'); next.setUTCDate(next.getUTCDate()+1);
         const nextDate = next.toISOString().slice(0,10);
-        const rows = await runSupersetQuery(ccMetricsQuery(date, nextDate));
+        // Load qualified lead IDs to filter cc_sent to bot-sourced leads only
+        const lidRaw = await redis.get<string>(`lead_ids:${date}`);
+        const lidData: any = lidRaw ? (typeof lidRaw === 'string' ? JSON.parse(lidRaw) : lidRaw) : {};
+        const qualIds: string[] = [...(lidData.freshIds||[]), ...(lidData.retainedIds||[])];
+        const rows = await runSupersetQuery(ccMetricsQuery(date, nextDate, qualIds));
         const cc = { cc_sent: Number(rows[0]?.cc_sent)||0, cc_attempted: Number(rows[0]?.cc_attempted)||0, cc_connected: Number(rows[0]?.cc_connected)||0 };
         const fKey = `funnel:row:v3:${date}`;
         const ex  = await redis.get<string>(fKey);

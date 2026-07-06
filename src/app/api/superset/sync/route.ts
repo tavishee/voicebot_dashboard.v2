@@ -23,8 +23,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'SUPERSET_AUTH_REQUIRED', authUrl: auth.authUrl }, { status: 401 });
     }
 
-    // Step 1: Fast query — cc_sent, cc_attempted, cc_connected (no joins, no window functions)
-    const fastRows = await runSupersetQuery(ccMetricsQuery(date, nextDate));
+    // Load qualified lead IDs for this date to filter cc_sent accurately
+    const redis = new (await import('@upstash/redis')).Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL!,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+    });
+    const lidRaw = await redis.get<string>(`lead_ids:${date}`);
+    const lidData = lidRaw ? (typeof lidRaw === 'string' ? JSON.parse(lidRaw) : lidRaw) : {};
+    const qualifiedIds: string[] = [
+      ...(lidData.freshIds || []),
+      ...(lidData.retainedIds || []),
+    ];
+
+    // Step 1: Fast query — cc_sent, cc_attempted, cc_connected filtered to qualified leads only
+    const fastRows = await runSupersetQuery(ccMetricsQuery(date, nextDate, qualifiedIds));
     const ccSent      = Number(fastRows[0]?.cc_sent) || 0;
     const ccAttempted = Number(fastRows[0]?.cc_attempted) || 0;
     const ccConnected = Number(fastRows[0]?.cc_connected) || 0;
