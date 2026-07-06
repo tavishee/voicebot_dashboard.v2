@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip } from 'chart.js';
 import type { FunnelRow } from '@/lib/storage';
-import { combinedQuery, receivedQuery, ccMetricsQuery } from '@/app/api/superset/queries';
+import { combinedQuery, receivedQuery, ccMetricsQuery, ccMetricsQueries } from '@/app/api/superset/queries';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
 const SUPERSET_LOGIN = 'https://insurance-analytic-platform.paytminsurance.co.in/superset/welcome/';
@@ -284,13 +284,17 @@ export default function Dashboard(){
         ].map((id:any)=>String(id).trim()).filter(Boolean)));
         const allIds:string[] = qualIds.length > 0 ? qualIds : Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean)));
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill or Fetch & Sync first.`);setSsLoading(false);return;}
-        // Step 1: Fast cc_sent/attempted/connected query filtered to qualified leads
-        setSsStatus(`Getting Enser metrics for ${allIds.length} qualified leads…`);
-        const ccSql=ccMetricsQuery(ssDate,nextDate,allIds);
-        const ccRows=await extensionCall('RUN_QUERY',{sql:ccSql});
-        const ccSent=Number(ccRows?.[0]?.cc_sent)||0;
-        const ccAttempted=Number(ccRows?.[0]?.cc_attempted)||0;
-        const ccConnected=Number(ccRows?.[0]?.cc_connected)||0;
+        // Step 1: Fast cc_sent — run in chunks of 200 IDs to avoid StarRocks timeout
+        const ccQueries=ccMetricsQueries(ssDate,nextDate,allIds);
+        setSsStatus(`Getting Enser metrics (${ccQueries.length} chunk${ccQueries.length>1?'s':''} of ~200 leads)…`);
+        let ccSent=0,ccAttempted=0,ccConnected=0;
+        for(let qi=0;qi<ccQueries.length;qi++){
+          setSsStatus(`Getting Enser metrics… chunk ${qi+1}/${ccQueries.length}`);
+          const ccRows=await extensionCall('RUN_QUERY',{sql:ccQueries[qi]});
+          ccSent+=Number(ccRows?.[0]?.cc_sent)||0;
+          ccAttempted+=Number(ccRows?.[0]?.cc_attempted)||0;
+          ccConnected+=Number(ccRows?.[0]?.cc_connected)||0;
+        }
         // Step 2: Attribution query for conversions (may be slow)
         let ccConverted=0;
         try{

@@ -179,19 +179,10 @@ WHERE (source = 'enser' OR source IS NULL)
   AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)`;
 }
 
-// Fast cc_sent/attempted/connected query filtered to qualified lead IDs
-export function ccMetricsQuery(date: string, nextDate: string, leadIds: string[] = []) {
-  let idFilter = '';
-  if (leadIds.length > 0) {
-    const chunks: string[][] = [];
-    for (let i = 0; i < leadIds.length; i += 500) chunks.push(leadIds.slice(i, i + 500));
-    const unionParts = chunks.map(chunk => {
-      const vals = chunk.map(id => `('${id.replace(/'/g, "''")}')`).join(',');
-      return `SELECT CAST(id AS VARCHAR) AS lead_id FROM (VALUES ${vals}) AS t(id)`;
-    }).join(' UNION ALL ');
-    idFilter = `AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM (${unionParts}) AS all_ids)`;
-  }
-  return `
+// Fast cc_sent query — returns array of queries to run in chunks of 200 IDs
+// Run each query, sum results client-side to avoid StarRocks IN clause limits
+export function ccMetricsQueries(date: string, nextDate: string, leadIds: string[]): string[] {
+  const base = `
 SELECT
     COUNT(*) AS cc_sent,
     SUM(CASE WHEN COALESCE(disposition1, '') <> ''
@@ -208,6 +199,22 @@ WHERE (source = 'enser' OR source IS NULL)
   AND date >= DATE_FORMAT(CAST('${date}' AS DATE), '%Y%m%d')
   AND date < DATE_FORMAT(CAST('${nextDate}' AS DATE), '%Y%m%d')
   AND created_on >= '${date} 00:00:00'
-  AND created_on < '${nextDate} 00:00:00'
-  ${idFilter}
-`;}
+  AND created_on < '${nextDate} 00:00:00'`;
+
+  if (!leadIds.length) return [base];
+
+  // 200 IDs per chunk — small enough for StarRocks to plan quickly
+  const queries: string[] = [];
+  for (let i = 0; i < leadIds.length; i += 200) {
+    const chunk = leadIds.slice(i, i + 200);
+    const inList = chunk.map(id => `'${id.replace(/'/g, "''")}'`).join(',');
+    queries.push(`${base}
+  AND CAST(customer_id AS VARCHAR) IN (${inList})`);
+  }
+  return queries;
+}
+
+// Legacy single-query version for backward compat
+export function ccMetricsQuery(date: string, nextDate: string, leadIds: string[] = []) {
+  return ccMetricsQueries(date, nextDate, leadIds)[0];
+}
