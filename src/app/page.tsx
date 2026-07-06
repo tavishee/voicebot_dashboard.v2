@@ -283,6 +283,8 @@ export default function Dashboard(){
           ...(lidData.retainedIds||[])
         ].map((id:any)=>String(id).trim()).filter(Boolean)));
         const allIds:string[] = qualIds.length > 0 ? qualIds : Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean)));
+        setSsStatus(`Lead IDs loaded: ${qualIds.length} qualified (${allIds.length} total). Building queries…`);
+        await new Promise(r=>setTimeout(r,1500)); // show debug info briefly
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill or Fetch & Sync first.`);setSsLoading(false);return;}
         // Step 1: Fast cc_sent — run in chunks of 200 IDs to avoid StarRocks timeout
         const ccQueries=ccMetricsQueries(ssDate,nextDate,allIds);
