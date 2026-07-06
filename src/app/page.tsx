@@ -75,6 +75,10 @@ export default function Dashboard(){
   const[retRows,setRetRows]=useState<any[]>([]);
   const[retSyncDate,setRetSyncDate]=useState(yesterdayStr());
   const[manualCronDate,setManualCronDate]=useState(yesterdayStr());
+  const[startupStatus,setStartupStatus]=useState('');
+  const[startupDone,setStartupDone]=useState(false);
+  const[startupStatus,setStartupStatus]=useState('');
+  const[startupDone,setStartupDone]=useState(false);
   const[manualCronStatus,setManualCronStatus]=useState('');
   const[manualCronLoading,setManualCronLoading]=useState(false);
   const[retStatus,setRetStatus]=useState('');
@@ -92,6 +96,116 @@ export default function Dashboard(){
       .then(d=>setRetRows(d.rows||[])).catch(console.error);
   };
   useEffect(()=>{loadRetention();},[]);
+
+  // Startup sync — runs on page load, fetches missing Gmail data + Enser cc_sent
+  useEffect(()=>{
+    if(startupDone) return;
+    setStartupDone(true);
+    const today = todayStr();
+    const yesterday = yesterdayStr();
+
+    const runStartup = async () => {
+      // 1. Run Gmail fetch for today and yesterday if missing
+      for(const d of [yesterday, today]){
+        try{
+          setStartupStatus(`Fetching Gmail data for ${d}…`);
+          await fetch(`/api/cron-trigger?date=${d}`);
+        }catch(e){ /* silent */ }
+      }
+
+      // 2. Check Superset auth
+      try{
+        setStartupStatus('Checking Superset auth…');
+        const authRes = await fetch('/api/superset/auth');
+        const authData = await authRes.json();
+        if(!authData.authenticated && authData.authUrl){
+          setStartupStatus(`⚠ Superset login needed — opening in new tab…`);
+          // Open Superset login in new tab, don't redirect away from dashboard
+          window.open(authData.authUrl, '_blank');
+          setStartupStatus('⚠ Log in to Superset in the new tab, then click "Fetch & Sync" to sync Enser data.');
+          load(); loadRetention();
+          return;
+        }
+
+        // 3. If authenticated, run cc_sent for any dates in last 7 days missing cc_sent
+        const dataRes = await fetch('/api/data');
+        const dataJson = await dataRes.json();
+        const missingCC: string[] = (dataJson.rows||[])
+          .filter((r:any) => !r.cc_sent || r.cc_sent === 0)
+          .map((r:any) => r.date)
+          .slice(-7); // max 7 dates
+
+        for(const d of missingCC){
+          setStartupStatus(`Syncing Enser cc_sent for ${d}…`);
+          try{
+            await fetch(`/api/cron-trigger?date=${d}`);
+          }catch(e){ /* silent */ }
+        }
+
+        setStartupStatus('');
+      }catch(e){ setStartupStatus(''); }
+
+      load(); loadRetention();
+    };
+
+    runStartup();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  // Startup sync — runs on page load, fetches missing Gmail data + Enser cc_sent
+  useEffect(()=>{
+    if(startupDone) return;
+    setStartupDone(true);
+    const today = todayStr();
+    const yesterday = yesterdayStr();
+
+    const runStartup = async () => {
+      // 1. Run Gmail fetch for today and yesterday if missing
+      for(const d of [yesterday, today]){
+        try{
+          setStartupStatus(`Fetching Gmail data for ${d}…`);
+          await fetch(`/api/cron-trigger?date=${d}`);
+        }catch(e){ /* silent */ }
+      }
+
+      // 2. Check Superset auth
+      try{
+        setStartupStatus('Checking Superset auth…');
+        const authRes = await fetch('/api/superset/auth');
+        const authData = await authRes.json();
+        if(!authData.authenticated && authData.authUrl){
+          setStartupStatus(`⚠ Superset login needed — opening in new tab…`);
+          // Open Superset login in new tab, don't redirect away from dashboard
+          window.open(authData.authUrl, '_blank');
+          setStartupStatus('⚠ Log in to Superset in the new tab, then click "Fetch & Sync" to sync Enser data.');
+          load(); loadRetention();
+          return;
+        }
+
+        // 3. If authenticated, run cc_sent for any dates in last 7 days missing cc_sent
+        const dataRes = await fetch('/api/data');
+        const dataJson = await dataRes.json();
+        const missingCC: string[] = (dataJson.rows||[])
+          .filter((r:any) => !r.cc_sent || r.cc_sent === 0)
+          .map((r:any) => r.date)
+          .slice(-7); // max 7 dates
+
+        for(const d of missingCC){
+          setStartupStatus(`Syncing Enser cc_sent for ${d}…`);
+          try{
+            await fetch(`/api/cron-trigger?date=${d}`);
+          }catch(e){ /* silent */ }
+        }
+
+        setStartupStatus('');
+      }catch(e){ setStartupStatus(''); }
+
+      load(); loadRetention();
+    };
+
+    runStartup();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   const uploadEnser = async () => {
     if (!eImage) return;
@@ -310,6 +424,10 @@ export default function Dashboard(){
 
   return(
     <>
+    {startupStatus&&<div style={{position:'fixed',top:0,left:0,right:0,zIndex:1000,background:startupStatus.startsWith('⚠')?'#fffbe6':'#e8f5e9',borderBottom:'1px solid',borderColor:startupStatus.startsWith('⚠')?'#ffe58f':'#a5d6a7',padding:'8px 16px',fontSize:12,color:startupStatus.startsWith('⚠')?'#7c4a00':'#2e7d32',display:'flex',alignItems:'center',gap:8}}>
+      <span>{startupStatus}</span>
+      <button onClick={()=>setStartupStatus('')} style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',fontSize:14,color:'inherit'}}>✕</button>
+    </div>}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;background:${C.bg};color:${C.text}}`}</style>
       {/* Topbar */}
       <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:'0 24px',display:'flex',alignItems:'center',justifyContent:'space-between',height:52,position:'sticky',top:0,zIndex:100}}>
