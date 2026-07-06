@@ -365,21 +365,7 @@ export default function Dashboard(){
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
         setSsAuthUrl('');setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);load();return;
       }
-      if(window.location.hostname!=='127.0.0.1'&&window.location.hostname!=='localhost')throw new Error('Chrome extension not detected. Install the Voicebot Superset Bridge, then reload this page.');
-      const response=await fetch('/api/superset/sync',{
-        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate}),
-      });
-      const data=await response.json();
-      if(response.status===401&&data.authUrl){
-        setSsAuthUrl(data.authUrl);
-        setSsStatus('Sign in to Superset in the new tab, then return here and click Continue sync.');
-        return;
-      }
-      if(!response.ok)throw new Error(data.error||'Superset sync failed');
-      setSsAuthUrl('');
-      const c=data.counts;
-      setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);
-      load();
+      throw new Error('Chrome extension not detected. Install the Voicebot Superset Bridge extension and make sure Superset is open in another tab, then reload this page.');
     } catch(e: any) {
       if(String(e.message).includes('SUPERSET_AUTH_REQUIRED')||String(e.message).includes('SUPERSET_TAB_REQUIRED')){
         setSsAuthUrl(SUPERSET_LOGIN);setSsStatus('Open Superset SQL Lab in another tab and sign in. Keep that tab open, then click Continue sync.');return;
