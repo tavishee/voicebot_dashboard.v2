@@ -163,10 +163,11 @@ export async function fetchGreylabsData(dateStr: string) {
   if (!messages?.length) { console.log(`GreyLabs email not found for ${dateStr} — email may have been deleted or is older than Gmail retention. Use bulk Excel upload instead.`); return null; }
   // Pick the email whose subject contains the target date string to avoid wrong email in ±2 day window
   // Subject format: "[GreyLabs AI] PayTM | Motor Insurance Voice AI | Lead Funnel Report | 02-Jul-26"
-  const day2 = String(target.getDate()).padStart(2,'0');
-  const mon3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][target.getMonth()];
-  const yr2  = String(target.getFullYear()).slice(2);
-  const targetLabel = `${day2}-${mon3}-${yr2}`; // e.g. "02-Jul-26"
+  // Parse dateStr directly to avoid UTC offset issues with Date object
+  const [yyyy, mm, dd] = dateStr.split('-');
+  const mon3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mm)-1];
+  const targetLabel = `${dd}-${mon3}-${yyyy.slice(2)}`; // e.g. "02-Jul-26"
+  console.log(`Looking for email with label: ${targetLabel}`);
   let bestId = messages[0].id!;
   for (const m of messages.slice(0, 5)) {
     const preview = await gmail.users.messages.get({ userId: 'me', id: m.id!, format: 'metadata', metadataHeaders: ['Subject'] });
