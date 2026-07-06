@@ -77,8 +77,6 @@ export default function Dashboard(){
   const[manualCronDate,setManualCronDate]=useState(yesterdayStr());
   const[startupStatus,setStartupStatus]=useState('');
   const[startupDone,setStartupDone]=useState(false);
-  const[startupStatus,setStartupStatus]=useState('');
-  const[startupDone,setStartupDone]=useState(false);
   const[manualCronStatus,setManualCronStatus]=useState('');
   const[manualCronLoading,setManualCronLoading]=useState(false);
   const[retStatus,setRetStatus]=useState('');
