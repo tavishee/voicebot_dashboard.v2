@@ -162,72 +162,7 @@ export default function Dashboard(){
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
-  // Startup sync — runs on page load
-  // 1. Gmail fetch for yesterday (today's data not available until EOD)
-  // 2. Sync cc_sent for all dates missing it in last 14 days
-  // 3. If Superset auth needed, show banner asking user to log in
-  useEffect(()=>{
-    if(startupDone) return;
-    setStartupDone(true);
 
-    const runStartup = async () => {
-      const yesterday = yesterdayStr();
-
-      // Step 1: Gmail fetch for yesterday
-      try{
-        setStartupStatus(`Syncing yesterday's data (${yesterday})…`);
-        await fetch(`/api/cron-trigger?date=${yesterday}`);
-      }catch(e){ /* silent */ }
-
-      // Step 2: Reload data to see what's missing cc_sent
-      const dataRes = await fetch('/api/data');
-      const dataJson = await dataRes.json();
-      const allRows: any[] = dataJson.rows || [];
-
-      // Find dates missing cc_sent, last 14 days only, excluding today
-      const today = todayStr();
-      const missingCC = allRows
-        .filter((r:any) => r.date < today && (!r.cc_sent || r.cc_sent === 0))
-        .map((r:any) => r.date)
-        .sort().slice(-14);
-
-      if(missingCC.length === 0){
-        setStartupStatus('');
-        load(); loadRetention();
-        return;
-      }
-
-      // Step 3: Check Superset auth before trying cc_sent sync
-      try{
-        setStartupStatus('Checking Superset connection…');
-        const authRes = await fetch('/api/superset/auth');
-        const authData = await authRes.json();
-
-        if(!authData.authenticated){
-          // Show persistent banner asking user to log in
-          setStartupStatus(`⚠ ${missingCC.length} date(s) missing Enser data (${missingCC.slice(-3).join(', ')}${missingCC.length>3?'…':''}). Log in to Superset to sync automatically.`);
-          load(); loadRetention();
-          return;
-        }
-
-        // Step 4: Authenticated — sync cc_sent for each missing date
-        for(const d of missingCC){
-          setStartupStatus(`Syncing Enser data for ${d}… (${missingCC.indexOf(d)+1}/${missingCC.length})`);
-          try{
-            await fetch(`/api/cron-trigger?date=${d}`);
-          }catch(e){ /* silent */ }
-        }
-        setStartupStatus('');
-      }catch(e){
-        setStartupStatus('⚠ Could not reach Superset. Open dashboard on Paytm WiFi to sync Enser data.');
-      }
-
-      load(); loadRetention();
-    };
-
-    runStartup();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[]);
 
   const uploadEnser = async () => {
     if (!eImage) return;
@@ -342,19 +277,13 @@ export default function Dashboard(){
         // Get lead IDs from Redis for this date
         let lidRes=await fetch(`/api/lead-ids?date=${ssDate}`);
         let lidData=await lidRes.json();
-        let allIds:string[]=Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean)));
-        const savedRow=rows.find(r=>r.date===ssDate);
-        const expectedQualified=(savedRow?.fresh_qualified||0)+(savedRow?.ret_qualified||0);
-        if(!allIds.length||(expectedQualified>0&&allIds.length!==expectedQualified)){
-          setSsStatus(`Refreshing the qualified Gmail cohort for ${ssDate}…`);
-          const refresh=await fetch(`/api/fetch-data?date=${ssDate}`);
-          const refreshData=await refresh.json();
-          if(!refresh.ok||refreshData.success===false)throw new Error(refreshData.error||refreshData.message||'Could not refresh Gmail lead IDs');
-          lidRes=await fetch(`/api/lead-ids?date=${ssDate}`);
-          lidData=await lidRes.json();
-          allIds=Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean))) as string[];
-        }
-        if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill first.`);setSsLoading(false);return;}
+        // Use freshIds+retainedIds (qualified only) for accurate cc_sent filtering
+        const qualIds:string[]=Array.from(new Set([
+          ...(lidData.freshIds||[]),
+          ...(lidData.retainedIds||[])
+        ].map((id:any)=>String(id).trim()).filter(Boolean)));
+        const allIds = qualIds.length > 0 ? qualIds : Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean)));
+        if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill or Fetch & Sync first.`);setSsLoading(false);return;}
         // Step 1: Fast cc_sent/attempted/connected query filtered to qualified leads
         setSsStatus(`Getting Enser metrics for ${allIds.length} qualified leads…`);
         const ccSql=ccMetricsQuery(ssDate,nextDate,allIds);
