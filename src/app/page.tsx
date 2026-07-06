@@ -282,7 +282,7 @@ export default function Dashboard(){
           ...(lidData.freshIds||[]),
           ...(lidData.retainedIds||[])
         ].map((id:any)=>String(id).trim()).filter(Boolean)));
-        const allIds = qualIds.length > 0 ? qualIds : Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean)));
+        const allIds:string[] = qualIds.length > 0 ? qualIds : Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean)));
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill or Fetch & Sync first.`);setSsLoading(false);return;}
         // Step 1: Fast cc_sent/attempted/connected query filtered to qualified leads
         setSsStatus(`Getting Enser metrics for ${allIds.length} qualified leads…`);
