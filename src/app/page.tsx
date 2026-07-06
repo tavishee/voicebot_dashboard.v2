@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip } from 'chart.js';
 import type { FunnelRow } from '@/lib/storage';
-import { combinedQuery, receivedQuery, ccMetricsQuery, ccMetricsQueries } from '@/app/api/superset/queries';
+import { combinedQuery, receivedQuery } from '@/app/api/superset/queries';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
 const SUPERSET_LOGIN = 'https://insurance-analytic-platform.paytminsurance.co.in/superset/welcome/';
@@ -283,32 +283,11 @@ export default function Dashboard(){
           ...(lidData.retainedIds||[])
         ].map((id:any)=>String(id).trim()).filter(Boolean)));
         const allIds:string[] = qualIds.length > 0 ? qualIds : Array.from(new Set((lidData.allIds||[]).map((id:any)=>String(id).trim()).filter(Boolean)));
-        setSsStatus(`Lead IDs loaded: ${qualIds.length} qualified (${allIds.length} total). Building queries…`);
-        await new Promise(r=>setTimeout(r,1500)); // show debug info briefly
         if(!allIds.length){setSsStatus(`✗ No lead IDs for ${ssDate}. Run GreyLabs backfill or Fetch & Sync first.`);setSsLoading(false);return;}
-        // Step 1: Fast cc_sent — run in chunks of 200 IDs to avoid StarRocks timeout
-        const ccQueries=ccMetricsQueries(ssDate,nextDate,allIds);
-        setSsStatus(`Getting Enser metrics (${ccQueries.length} chunk${ccQueries.length>1?'s':''} of ~200 leads)…`);
-        let ccSent=0,ccAttempted=0,ccConnected=0;
-        for(let qi=0;qi<ccQueries.length;qi++){
-          setSsStatus(`Getting Enser metrics… chunk ${qi+1}/${ccQueries.length}`);
-          const ccRows=await extensionCall('RUN_QUERY',{sql:ccQueries[qi]});
-          ccSent+=Number(ccRows?.[0]?.cc_sent)||0;
-          ccAttempted+=Number(ccRows?.[0]?.cc_attempted)||0;
-          ccConnected+=Number(ccRows?.[0]?.cc_connected)||0;
-        }
-        // Step 2: Attribution query for conversions (may be slow)
-        let ccConverted=0;
-        try{
-          setSsStatus(`cc_sent=${ccSent} · Getting conversions (this may take a minute)…`);
-          const convSql=combinedQuery(ssDate,nextDate,allIds);
-          const queryRows=await extensionCall('RUN_QUERY',{sql:convSql});
-          ccConverted=Number(queryRows?.[0]?.cc_converted)||0;
-        }catch(convErr:any){
-          setSsStatus(`cc_sent=${ccSent} · Conversion query timed out — saving cc_sent only`);
-          await new Promise(r=>setTimeout(r,2000));
-        }
-        const c={cc_sent:ccSent,cc_attempted:ccAttempted,cc_connected:ccConnected,cc_converted:ccConverted,cc_churn:0};
+        setSsStatus(`Matching ${allIds.length} qualified leads and calculating CC conversions…`);
+        const sql=combinedQuery(ssDate,nextDate,allIds);
+        const queryRows=await extensionCall('RUN_QUERY',{sql});
+        const c={cc_sent:Number(queryRows?.[0]?.cc_sent)||0,cc_attempted:Number(queryRows?.[0]?.cc_attempted)||0,cc_connected:Number(queryRows?.[0]?.cc_connected)||0,cc_converted:Number(queryRows?.[0]?.cc_converted)||0,cc_churn:0};
         const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
         setSsAuthUrl('');setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);load();return;
