@@ -170,12 +170,20 @@ export async function fetchGreylabsData(dateStr: string) {
   const targetLabel = `${dd}-${mon3}-${yyyy.slice(2)}`; // e.g. "02-Jul-26"
   console.log(`Looking for email with label: ${targetLabel}`);
   let bestId = messages[0].id!;
-  for (const m of messages.slice(0, 5)) {
+  // Check all candidates but prefer the OLDEST matching email (index highest in newest-first list)
+  // GreyLabs sometimes resends corrected reports — we want the original daily report, not corrections
+  let foundMatch = false;
+  for (const m of messages.slice(0, 10)) {
     const preview = await gmail.users.messages.get({ userId: 'me', id: m.id!, format: 'metadata', metadataHeaders: ['Subject'] });
     const subj = preview.data.payload?.headers?.find((h:any) => h.name === 'Subject')?.value || '';
     console.log(`Candidate email subject: ${subj}`);
-    if (subj.includes(targetLabel)) { bestId = m.id!; console.log(`Matched: ${subj}`); break; }
+    if (subj.includes(targetLabel)) {
+      bestId = m.id!; // keep updating — last match = oldest since Gmail returns newest first
+      foundMatch = true;
+      console.log(`Found match: ${subj}`);
+    }
   }
+  if (foundMatch) console.log(`Using oldest matching email: ${bestId}`);
   const msg = await gmail.users.messages.get({ userId: 'me', id: bestId, format: 'full' });
   const body = getEmailBody(msg.data.payload);
   if (!body) return null;
