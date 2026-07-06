@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { checkSupersetAuth, runSupersetQuery } from '@/lib/superset-mcp';
 import { ccMetricsQuery, combinedQuery } from '@/lib/superset-queries';
 import { saveEnserOnly } from '@/lib/storage';
+import { Redis } from '@upstash/redis';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
     }
 
     // Load qualified lead IDs for this date to filter cc_sent accurately
-    const redis = new (await import('@upstash/redis')).Redis({
+    const redis = new Redis({
       url: process.env.UPSTASH_REDIS_REST_URL!,
       token: process.env.UPSTASH_REDIS_REST_TOKEN!,
     });
