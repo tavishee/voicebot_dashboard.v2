@@ -755,12 +755,12 @@ export default function Dashboard(){
                     const cells=[];
                     for(let d=0;d<=maxDay;d++){
                       const val=retMetric==='enser'?(row.enser?.[`day${d}`]?.converted||0):(row.grey?.[`day${d}`]?.[retMetric]||0);
-                      const denom = retMetric==='enser' ? (row.cc_sent||0) : (row.leads_sent||1);
+                      const denom = retMetric==='enser' ? (row.cc_sent||0) : (row.leads_sent||0);
                       const p2 = denom>0 ? Math.round(val/denom*1000)/10 : 0;
                       total+=val;
                       cells.push({val,pct:p2});
                     }
-                    const denom2 = retMetric==='enser' ? (row.cc_sent||0) : (row.leads_sent||1);
+                    const denom2 = retMetric==='enser' ? (row.cc_sent||0) : (row.leads_sent||0);
                     const totalPct = denom2>0 ? Math.round(total/denom2*1000)/10 : 0;
                     const col=retMetric==='enser'?C.green:retMetric==='qualified'?C.purpleM:C.blueM;
                     return(
