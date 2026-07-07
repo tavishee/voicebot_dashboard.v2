@@ -170,20 +170,40 @@ export async function fetchGreylabsData(dateStr: string) {
   const targetLabel = `${dd}-${mon3}-${yyyy.slice(2)}`; // e.g. "02-Jul-26"
   console.log(`Looking for email with label: ${targetLabel}`);
   let bestId = messages[0].id!;
-  // Check all candidates but prefer the OLDEST matching email (index highest in newest-first list)
-  // GreyLabs sometimes resends corrected reports — we want the original daily report, not corrections
+  // Find the best matching email:
+  // - Must have targetLabel (e.g. "02-Jul-26") in subject
+  // - Must be sent ON the target date (not a resend on a later date)
+  // Gmail returns newest first, so iterate and pick the FIRST match sent on target date
+  const targetDatePrefix = dateStr; // "2026-07-02"
   let foundMatch = false;
   for (const m of messages.slice(0, 10)) {
-    const preview = await gmail.users.messages.get({ userId: 'me', id: m.id!, format: 'metadata', metadataHeaders: ['Subject'] });
+    const preview = await gmail.users.messages.get({ userId: 'me', id: m.id!, format: 'metadata', metadataHeaders: ['Subject', 'Date'] });
     const subj = preview.data.payload?.headers?.find((h:any) => h.name === 'Subject')?.value || '';
-    console.log(`Candidate email subject: ${subj}`);
-    if (subj.includes(targetLabel)) {
-      bestId = m.id!; // keep updating — last match = oldest since Gmail returns newest first
+    const sentDate = preview.data.payload?.headers?.find((h:any) => h.name === 'Date')?.value || '';
+    // Parse sent date to YYYY-MM-DD in IST (UTC+5:30)
+    let sentDateIST = '';
+    try {
+      const d = new Date(sentDate);
+      const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+      sentDateIST = ist.toISOString().slice(0, 10);
+    } catch {}
+    console.log(`Candidate: subject="${subj}" sentIST=${sentDateIST}`);
+    if (subj.includes(targetLabel) && sentDateIST === targetDatePrefix) {
+      bestId = m.id!;
       foundMatch = true;
-      console.log(`Found match: ${subj}`);
+      console.log(`Best match (sent on target date): ${subj} at ${sentDateIST}`);
+      break; // First match sent on the right date = latest same-day email = most accurate
     }
   }
-  if (foundMatch) console.log(`Using oldest matching email: ${bestId}`);
+  // Fallback: any email with targetLabel regardless of send date
+  if (!foundMatch) {
+    for (const m of messages.slice(0, 10)) {
+      const preview = await gmail.users.messages.get({ userId: 'me', id: m.id!, format: 'metadata', metadataHeaders: ['Subject'] });
+      const subj = preview.data.payload?.headers?.find((h:any) => h.name === 'Subject')?.value || '';
+      if (subj.includes(targetLabel)) { bestId = m.id!; console.log(`Fallback match: ${subj}`); break; }
+    }
+  }
+  console.log(`Using email: ${bestId}`);
   const msg = await gmail.users.messages.get({ userId: 'me', id: bestId, format: 'full' });
   const body = getEmailBody(msg.data.payload);
   if (!body) return null;
