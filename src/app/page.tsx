@@ -82,6 +82,7 @@ export default function Dashboard(){
   const[retStatus,setRetStatus]=useState('');
   const[retLoading,setRetLoading]=useState(false);
   const[retMetric,setRetMetric]=useState<'connected'|'qualified'|'enser'>('connected');
+  const[retCumulative,setRetCumulative]=useState(false);
 
   const load=()=>{
     fetch('/api/data').then(r=>r.json())
@@ -669,6 +670,10 @@ export default function Dashboard(){
               <option value="enser">Enser Conversion</option>
             </select>
           </div>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginTop:8,marginBottom:4}}>
+            <button onClick={()=>setRetCumulative(false)} style={{padding:'4px 12px',borderRadius:4,border:`1px solid ${C.border}`,background:!retCumulative?C.blueM:'transparent',color:!retCumulative?'#fff':C.text2,cursor:'pointer',fontSize:12}}>Absolute</button>
+            <button onClick={()=>setRetCumulative(true)} style={{padding:'4px 12px',borderRadius:4,border:`1px solid ${C.border}`,background:retCumulative?C.blueM:'transparent',color:retCumulative?'#fff':C.text2,cursor:'pointer',fontSize:12}}>Cumulative</button>
+          </div>
           {retRows.length===0
             ?<div style={{...card,textAlign:'center' as const,padding:40,color:C.text3}}>No retention data yet — upload daily Excel files via the "+ Data" tab</div>
             :<div style={{...card,overflowX:'auto' as const,maxHeight:'75vh',overflow:'auto' as const}}>
@@ -689,13 +694,17 @@ export default function Dashboard(){
                     let total=0;
                     const cells=[];
                     for(let d=0;d<=maxDay;d++){
-                      const val=retMetric==='enser'?(row.enser?.[`day${d}`]?.converted||0):(row.grey?.[`day${d}`]?.[retMetric]||0);
+                      const absVal=retMetric==='enser'?(row.enser?.[`day${d}`]?.converted||0):(row.grey?.[`day${d}`]?.[retMetric]||0);
+                      total+=absVal;
+                      const cumVal=total; // cumulative = running sum up to this day
+                      const val=retCumulative?cumVal:absVal;
                       const denom = retMetric==='enser' ? (row.cc_sent||0) : (row.leads_sent||0);
                       const p2 = denom>0 ? Math.round(val/denom*1000)/10 : 0;
-                      total+=val;
                       cells.push({val,pct:p2});
                     }
                     const denom2 = retMetric==='enser' ? (row.cc_sent||0) : (row.leads_sent||0);
+                    // In cumulative mode, total column shows same as last non-empty day (already the max)
+                    // In absolute mode, total is sum of all days
                     const totalPct = denom2>0 ? Math.round(total/denom2*1000)/10 : 0;
                     const col=retMetric==='enser'?C.green:retMetric==='qualified'?C.purpleM:C.blueM;
                     return(
