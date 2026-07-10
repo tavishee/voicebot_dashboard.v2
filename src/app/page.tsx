@@ -850,13 +850,42 @@ export default function Dashboard(){
               </table>
             </div>
           }
-          <div style={{...card,marginTop:16,maxWidth:500,textAlign:'center' as const,color:C.text3,fontSize:12}}>
-            Use <strong>Sync All</strong> in the + Data tab to sync Enser conversions for a date range.
+          <div style={{...card,marginTop:16,maxWidth:500}}>
+            <div style={cardT}><span style={bCC}>Enser</span> Conversion Cohort Sync</div>
+            <p style={{fontSize:12,color:C.text3,marginBottom:12}}>Sync Enser conversion data for a cohort date via Chrome extension.</p>
+            <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:10}}>
+              <input style={inp} type="date" value={retSyncDate} onChange={e=>setRetSyncDate(e.target.value)}/>
+              <button style={{...btnP,background:C.greenM}} onClick={syncRetention} disabled={retLoading}>
+                {retLoading?'Syncing…':'Sync conversions'}
+              </button>
+            </div>
+            {retStatus&&<div style={{fontSize:12,padding:'8px 10px',borderRadius:6,background:retStatus.startsWith('✓')?C.greenL:C.redL,color:retStatus.startsWith('✓')?C.green:C.red}}>{retStatus}</div>}
           </div>
         </>}
         {tab==='upload'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,maxWidth:1000}}>
-          {/* Sync All — the only sync entry point */}
-          <div style={{...card,gridColumn:'span 2'}}>
+          {/* Enser via Superset */}
+          <div style={card}>
+            <div style={cardT}><span style={bCC}>Enser</span> Sync from Superset</div>
+            <p style={{fontSize:12,color:C.text3,marginBottom:14}}>
+              Uses the Voicebot Superset Bridge extension to query through your corporate network and existing Superset login.
+            </p>
+            <div style={{marginBottom:10}}>
+              <label style={igL}>Date to sync</label>
+              <input style={igI} type="date" value={ssDate} onChange={e=>setSsDate(e.target.value)}/>
+            </div>
+            <button style={{...btnP,width:'100%',background:C.greenM}} onClick={syncSuperset} disabled={ssLoading}>
+              {ssLoading?'Checking access…':ssAuthUrl?'Continue sync':'Sync from Superset'}
+            </button>
+            {ssAuthUrl&&<a href={SUPERSET_LOGIN} target="_blank" rel="noreferrer" style={{display:'block',textAlign:'center',marginTop:8,fontSize:12,color:C.blue}}>Open Superset →</a>}
+            {ssStatus&&<div style={{marginTop:10,fontSize:12,color:ssStatus.startsWith('✓')?C.green:ssAuthUrl?C.amber:C.red,padding:'8px 10px',background:ssStatus.startsWith('✓')?C.greenL:ssAuthUrl?C.amberL:C.redL,borderRadius:6}}>{ssStatus}</div>}
+            <hr style={{border:'none',borderTop:`1px dashed ${C.border}`,margin:'14px 0'}}/>
+            <p style={{fontSize:11,color:C.text3}}>
+              Calls and attributed conversions are fetched together for the selected calendar day.
+            </p>
+          </div>
+
+          {/* Manual daily fetch */}
+          <div style={card}>
             <div style={cardT}><span style={bBot}>Sync All</span> Full sync for a date range</div>
             <div style={{fontSize:12,color:C.text3,marginBottom:8}}>Gmail + grey retention + Enser cc_sent for every date. Open Superset in a tab for Enser sync.</div>
             <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap' as const}}>
