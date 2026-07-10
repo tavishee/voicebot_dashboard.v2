@@ -434,7 +434,7 @@ export default function Dashboard(){
               {l:'Retained qualify %',v:pct(fs.rq,fs.rc)+'%',s:`${fs.rq.toLocaleString()} qualified`},
               {l:'High Intent conv %',v:pct(fs.cv,fRows.reduce((s,r)=>s+(r.high_intent||0),0))+'%',s:`${fRows.reduce((s,r)=>s+(r.high_intent||0),0).toLocaleString()} high intent`},
               {l:'Medium Intent conv %',v:pct(fs.cv,fRows.reduce((s,r)=>s+(r.medium_intent||0),0))+'%',s:`${fRows.reduce((s,r)=>s+(r.medium_intent||0),0).toLocaleString()} medium intent`},
-              {l:'Callback conv %',v:pct(fs.cv,fRows.reduce((s,r)=>s+(r.callback_agent||r.fresh_callback+r.ret_callback||0),0))+'%',s:`${fRows.reduce((s,r)=>s+(r.callback_agent||r.fresh_callback+r.ret_callback||0),0).toLocaleString()} callback`},
+              {l:'Callback conv %',v:pct(fs.cv,fRows.reduce((s,r)=>s+((r as any).callback_agent||(r.fresh_callback||0)+(r.ret_callback||0)||0),0))+'%',s:`${fRows.reduce((s,r)=>s+((r as any).callback_agent||(r.fresh_callback||0)+(r.ret_callback||0)||0),0).toLocaleString()} callback`},
             ].map(k=>(
               <div key={k.l} style={kpi}>
                 <div style={{fontSize:10,color:C.text3,textTransform:'uppercase' as const,letterSpacing:'.05em',marginBottom:5}}>{k.l}</div>
