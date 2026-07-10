@@ -112,7 +112,9 @@ export default function Dashboard(){
         const checkRes = await fetch('/api/data');
         const checkJson = await checkRes.json();
         const yesterdayRow = (checkJson.rows||[]).find((r:any)=>r.date===yesterday);
-        if(!yesterdayRow || !yesterdayRow.fresh_sent || yesterdayRow.fresh_sent === 0){
+        // Skip known bad data dates where GreyLabs report was corrupted
+        const skipDates = ['2026-07-02'];
+        if(!skipDates.includes(yesterday) && (!yesterdayRow || !yesterdayRow.fresh_sent || yesterdayRow.fresh_sent === 0)){
           setStartupStatus(`Fetching yesterday's data (${yesterday})…`);
           await fetch(`/api/cron-trigger?date=${yesterday}`);
         }

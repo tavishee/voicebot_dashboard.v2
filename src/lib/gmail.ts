@@ -223,21 +223,5 @@ export async function fetchGreylabsData(dateStr: string) {
   } else {
     console.log('No xlsx attachment found in email');
   }
-  // If we have an attachment, use its summary row for funnel numbers (more accurate than email body)
-  // The Excel summary is always daily data; email body can be cumulative
-  if (freshRows.length > 0 || retainedRows.length > 0) {
-    // Count from actual rows rather than email body summary
-    const freshSent    = freshRows.length;
-    const freshQual    = freshRows.filter((r: any) => r.qualified === 'YES').length;
-    const freshConn    = freshRows.filter((r: any) => r.connected > 0).length;
-    const retSent      = retainedRows.length;
-    const retQual      = retainedRows.filter((r: any) => r.qualified === 'YES').length;
-    const retConn      = retainedRows.filter((r: any) => r.connected > 0).length;
-    if (freshSent > 0) {
-      console.log(`Using attachment row counts: fresh=${freshSent} ret=${retSent}`);
-      funnelData.fresh = { ...funnelData.fresh, sent: freshSent, connected: freshConn, qualified: freshQual };
-      if (funnelData.retained) funnelData.retained = { ...funnelData.retained, sent: retSent, connected: retConn, qualified: retQual };
-    }
-  }
   return { ...funnelData, freshIds, retainedIds, freshRows, retainedRows };
 }
