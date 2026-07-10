@@ -276,9 +276,7 @@ export default function Dashboard(){
           const lidData=await lidRes.json();
           const ids:string[]=[...(lidData.freshIds||[]),...(lidData.retainedIds||[])];
           if(!ids.length){log.push(`${d} Enser: ⚠ no lead IDs`);continue;}
-          // Import query functions
-          const {receivedQuery,combinedQuery}=await import('@/app/api/superset/queries');
-          // Run cc_sent query
+          // Run cc_sent query using already-imported receivedQuery
           const ccSql=receivedQuery(d,ids);
           const ccRows=await new Promise<any>((res,rej)=>{
             const id2=Math.random().toString(36).slice(2);
