@@ -23,6 +23,7 @@ cdr AS (
     AND customer_id NOT LIKE 'NA'
     AND service IN ('Fresh_Car', 'Renewal_Car')
     AND dl_last_updated >= date('${date}')
+    AND dl_last_updated < date('${date}') + interval '2' day
     AND date(start_time) = date('${date}')
     AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
 ),
@@ -87,6 +88,7 @@ WHERE (source = 'enser' OR source IS NULL)
   AND customer_id NOT LIKE 'NA'
   AND service IN ('Fresh_Car', 'Renewal_Car')
   AND dl_last_updated >= date('${date}')
+  AND dl_last_updated < date('${date}') + interval '2' day
   AND date(start_time) = date('${date}')
   AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)`;
 }
