@@ -312,6 +312,10 @@ export default function Dashboard(){
         }
         const c={cc_sent:ccSent,cc_attempted:ccAttempted,cc_connected:ccConnected,cc_converted:ccConverted,cc_churn:0};
         const save=await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:ssDate,...c,cc_conversion_on_connect:c.cc_connected>0?c.cc_converted/c.cc_connected*100:0})});
+        // Sync cc_converted to retention enser day0 so main funnel and retention match
+        if(c.cc_converted>0){
+          await fetch('/api/retention',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cohort_date:ssDate,enser:{day0:{converted:c.cc_converted}}})});
+        }
         const saved=await save.json();if(!save.ok)throw new Error(saved.error||'Could not save Superset data');
         setSsAuthUrl('');setSsStatus(`✓ ${ssDate}: ${c.cc_sent} received · ${c.cc_attempted} attempted · ${c.cc_connected} connected · ${c.cc_converted} converted`);load();return;
       }
