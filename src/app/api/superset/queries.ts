@@ -173,26 +173,25 @@ WITH qualified_leads AS (
 ),
 enser_calls AS (
   SELECT
-    CAST(lead_id AS VARCHAR) AS lead_id,
+    CAST(customer_id AS VARCHAR) AS customer_id,
     disposition1, disposition2, disposition3,
     talk_duration, start_time
   FROM hive.recent_search.enser_callback_data_snapshot_v3
-  WHERE source = 'greylabs'
-    AND service IN ('Fresh_Car', 'Renewal_Car')
+  WHERE service IN ('Fresh_Car', 'Renewal_Car')
     AND dl_last_updated >= date('${date}')
     AND dl_last_updated < date('${date}') + interval '1' day
-    AND CAST(lead_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
+    AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
 )
 SELECT
-  COUNT(DISTINCT lead_id) AS cc_sent,
+  COUNT(DISTINCT customer_id) AS cc_sent,
   COUNT(DISTINCT CASE WHEN COALESCE(disposition1,'') <> ''
     OR COALESCE(disposition2,'') <> '' OR COALESCE(disposition3,'') <> ''
-    THEN lead_id END) AS cc_attempted,
+    THEN customer_id END) AS cc_attempted,
   COUNT(DISTINCT CASE WHEN
     COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',1) AS INT),0)*3600 +
     COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',2) AS INT),0)*60 +
     COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',3) AS INT),0) > 0
-    THEN lead_id END) AS cc_connected
+    THEN customer_id END) AS cc_connected
 FROM enser_calls`;
 }
 
