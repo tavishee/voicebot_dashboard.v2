@@ -236,65 +236,90 @@ export default function Dashboard(){
   };
 
 
-  // Unified bulk sync — Gmail + Enser cc_sent + Enser retention conversions for a date range
+  // ── SINGLE SYNC ALL ── Gmail + grey + Enser cc + retention conversions, all dates at once
   const runFullBulkSync=async()=>{
-    setBulkCancelled(false);setBulkLoading(true);setBulkStatus('Starting…');
-    // Build date list
+    setBulkCancelled(false);setBulkLoading(true);setBulkStatus('Building date list…');
     const dates:string[]=[];
     const cur=new Date(bulkFromDate+'T00:00:00Z');
     const end=new Date(bulkToDate+'T00:00:00Z');
     while(cur<=end){dates.push(cur.toISOString().slice(0,10));cur.setUTCDate(cur.getUTCDate()+1);}
     const log:string[]=[];
-    // Step 1: Gmail + grey retention for all dates
-    for(let i=0;i<dates.length;i++){
-      if(bulkCancelled)break;
-      const d=dates[i];
-      setBulkStatus(`[${i+1}/${dates.length}] Gmail: ${d}`);
-      try{
-        const r=await fetch(`/api/cron-trigger?date=${d}`);
-        const data=await r.json();
-        log.push(`${d} Gmail: ${data.gmail?.success?'✓':data.gmail?.message?.includes('not found')?'⚠ no email':'✗'}`);
-      }catch{log.push(`${d} Gmail: ✗`);}
-    }
-    // Step 2: Enser cc_sent + cc_attempted for all dates (via extension)
-    setBulkStatus('Checking Superset extension…');
+
+    // Helper: run a query through the extension
+    const extQuery=(sql:string,timeoutMs=90000)=>new Promise<any>((res,rej)=>{
+      const id=Math.random().toString(36).slice(2);
+      const t=setTimeout(()=>{window.removeEventListener('message',h);rej(new Error('timeout'));},timeoutMs);
+      function h(e:MessageEvent){if(e.data?.source==='superset-bridge'&&e.data?.id===id){clearTimeout(t);window.removeEventListener('message',h);e.data.success?res(e.data.data):rej(new Error(e.data.error||'query failed'));}}
+      window.addEventListener('message',h);
+      window.postMessage({source:'voicebot-dashboard',type:'RUN_QUERY',id,sql},'*');
+    });
+
+    // Check extension
     const extReady=await new Promise<boolean>(res=>{
       const id=Math.random().toString(36).slice(2);
       const t=setTimeout(()=>{window.removeEventListener('message',h);res(false);},2000);
-      function h(e:MessageEvent){if(e.data?.source==='superset-bridge'&&e.data?.id===id){clearTimeout(t);window.removeEventListener('message',h);res(e.data.success);}}
+      function h(e:MessageEvent){if(e.data?.source==='superset-bridge'&&e.data?.id===id){clearTimeout(t);window.removeEventListener('message',h);res(!!e.data.success);}}
       window.addEventListener('message',h);
       window.postMessage({source:'voicebot-dashboard',type:'PING',id},'*');
     });
-    if(extReady){
-      for(let i=0;i<dates.length;i++){
-        if(bulkCancelled)break;
-        const d=dates[i];
-        setBulkStatus(`[${i+1}/${dates.length}] Enser sync: ${d}`);
-        // Get lead IDs for this date
-        try{
-          const lidRes=await fetch(`/api/lead-ids?date=${d}`);
-          const lidData=await lidRes.json();
-          const ids:string[]=[...(lidData.freshIds||[]),...(lidData.retainedIds||[])];
-          if(!ids.length){log.push(`${d} Enser: ⚠ no lead IDs`);continue;}
-          // Run cc_sent query using already-imported receivedQuery
-          const ccSql=receivedQuery(d,ids);
-          const ccRows=await new Promise<any>((res,rej)=>{
-            const id2=Math.random().toString(36).slice(2);
-            const t=setTimeout(()=>{window.removeEventListener('message',h2);rej(new Error('timeout'));},60000);
-            function h2(e:MessageEvent){if(e.data?.source==='superset-bridge'&&e.data?.id===id2){clearTimeout(t);window.removeEventListener('message',h2);e.data.success?res(e.data.data):rej(new Error(e.data.error));}}
-            window.addEventListener('message',h2);
-            window.postMessage({source:'voicebot-dashboard',type:'RUN_QUERY',id:id2,sql:ccSql},'*');
-          });
-          const ccSent=Number(ccRows?.[0]?.cc_sent)||0;
-          const ccAttempted=Number(ccRows?.[0]?.cc_attempted)||0;
-          const ccConnected=Number(ccRows?.[0]?.cc_connected)||0;
-          await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:d,cc_sent:ccSent,cc_attempted:ccAttempted,cc_connected:ccConnected,cc_converted:0,cc_churn:0,cc_conversion_on_connect:0})});
-          log.push(`${d} Enser: ✓ sent=${ccSent} attempted=${ccAttempted}`);
-        }catch(e:any){log.push(`${d} Enser: ✗ ${e.message?.slice(0,30)}`);}
-      }
-    }else{
-      log.push('Enser: ⚠ Extension not detected — skipped cc_sent sync');
+    if(!extReady) log.push('⚠ Superset extension not detected — Enser sync skipped. Open Superset in a tab and reload extension.');
+
+    for(let i=0;i<dates.length;i++){
+      if(bulkCancelled){log.push('⚠ Stopped by user');break;}
+      const d=dates[i];
+      setBulkStatus(`[${i+1}/${dates.length}] ${d}`);
+
+      // 1. Gmail + grey retention
+      try{
+        const r=await fetch(`/api/cron-trigger?date=${d}`);
+        const data=await r.json();
+        const gmailOk=data.gmail?.success;
+        const cohorts=data.gmail?.cohorts_updated||0;
+        log.push(`${d} Gmail:${gmailOk?`✓ grey=${cohorts}`:'⚠ no email'}`);
+      }catch{log.push(`${d} Gmail:✗`);}
+
+      if(!extReady) continue;
+
+      // 2. Enser cc_sent / cc_attempted / cc_connected
+      try{
+        const lidRes=await fetch(`/api/lead-ids?date=${d}`);
+        const lidData=await lidRes.json();
+        const ids:string[]=[...(lidData.freshIds||[]),...(lidData.retainedIds||[])];
+        if(!ids.length){log.push(`${d} Enser:⚠ no IDs`);continue;}
+        const ccRows=await extQuery(receivedQuery(d,ids));
+        const ccSent=Number(ccRows?.[0]?.cc_sent)||0;
+        const ccAttempted=Number(ccRows?.[0]?.cc_attempted)||0;
+        const ccConnected=Number(ccRows?.[0]?.cc_connected)||0;
+        await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({date:d,cc_sent:ccSent,cc_attempted:ccAttempted,cc_connected:ccConnected,cc_converted:0,cc_churn:0,cc_conversion_on_connect:0})});
+
+        // 3. Enser retention conversions (day 0-6 cohort breakdown) + cc_converted for main funnel
+        const next7=new Date(d+'T00:00:00Z');next7.setUTCDate(next7.getUTCDate()+7);
+        const nextDate=next7.toISOString().slice(0,10);
+        const idChunks:string[][]=[];
+        for(let j=0;j<ids.length;j+=1000)idChunks.push(ids.slice(j,j+1000));
+        const ql=idChunks.map(chunk=>{
+          const vals=chunk.map((id:string)=>`('${id.replace(/'/g,"''")}')`).join(',');
+          return `SELECT CAST(id AS VARCHAR) AS lead_id FROM (VALUES ${vals}) AS t(id)`;
+        }).join('\n    UNION ALL\n    ');
+        const retSql=`WITH qualified_leads AS (\n    ${ql}\n)\nSELECT\n  DATEDIFF(date(a.created_at), date('${d}')) AS day_number,\n  COUNT(DISTINCT a.customer_id) AS converted\nFROM marketplace.sales_order_snapshot_v3 a\nLEFT JOIN marketplace.sales_order_item_snapshot_v3 b ON a.id = b.order_id\nWHERE b.vertical_id = 173\n  AND b.name NOT IN ('Health Insurance','Health Advantage Plus','HDFC Life Term Insurance','Term Life Insurance','Compulsory Personal Accident 4W','Compulsory Personal Accident 2W','Two Wheeler Insurance','Compulsory Personal Accident 2W - Standalone')\n  AND a.dl_last_updated >= date('${d}')\n  AND a.dl_last_updated < date('${d}') + interval '50' day\n  AND b.dl_last_updated >= date('${d}')\n  AND b.dl_last_updated < date('${d}') + interval '50' day\n  AND date(a.created_at) >= date('${d}')\n  AND date(a.created_at) < date('${nextDate}')\n  AND CAST(a.customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)\nGROUP BY 1\nORDER BY 1`;
+        const convRows=await extQuery(retSql);
+        const enser:Record<string,{converted:number}>={};
+        let day0Conv=0;
+        for(const r of (convRows||[])){
+          const dn=Number(r.day_number);
+          if(dn>=0&&dn<=6){enser[`day${dn}`]={converted:Number(r.converted)||0};if(dn===0)day0Conv=Number(r.converted)||0;}
+        }
+        await fetch('/api/retention',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cohort_date:d,enser})});
+        // Update cc_converted on main funnel row with day0 conversion
+        if(day0Conv>0){
+          await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({date:d,cc_sent:ccSent,cc_attempted:ccAttempted,cc_connected:ccConnected,cc_converted:day0Conv,cc_churn:0,cc_conversion_on_connect:ccConnected>0?day0Conv/ccConnected*100:0})});
+        }
+        log.push(`${d} Enser:✓ sent=${ccSent} attempted=${ccAttempted} conv=${day0Conv}`);
+      }catch(e:any){log.push(`${d} Enser:✗ ${e.message?.slice(0,40)}`);}
     }
+
     setBulkStatus(`✓ Done (${dates.length} dates):\n${log.join('\n')}`);
     setBulkLoading(false);
     fetch('/api/data').then(r=>r.json()).then(d=>setRows(d.rows||[]));
