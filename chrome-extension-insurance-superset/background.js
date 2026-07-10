@@ -1,5 +1,5 @@
-const SUPERSET_URL = 'https://cdp-query.platform.mypaytm.com';
-const STARROCKS_DATABASE_ID = 6;
+const SUPERSET_URL = 'https://insurance-analytic-platform.paytminsurance.co.in';
+const STARROCKS_DATABASE_ID = 11;
 
 function validateQuery(sql) {
   const normalized = sql.trim();
