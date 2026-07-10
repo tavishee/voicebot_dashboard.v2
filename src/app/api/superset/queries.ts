@@ -39,10 +39,11 @@ conversions AS (
       'Compulsory Personal Accident 2W - Standalone'
     )
     AND a.dl_last_updated >= date('${date}')
-    AND a.dl_last_updated < date('${date}') + interval '2' day
+    AND a.dl_last_updated < date('${date}') + interval '50' day
     AND b.dl_last_updated >= date('${date}')
-    AND b.dl_last_updated < date('${date}') + interval '2' day
-    AND date(a.created_at) = date('${date}')
+    AND b.dl_last_updated < date('${date}') + interval '50' day
+    AND date(a.created_at) >= date('${date}')
+    AND date(a.created_at) < date('${nextDate}')
     AND CAST(a.customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
 )
 SELECT
