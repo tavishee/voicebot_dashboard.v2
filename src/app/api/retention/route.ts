@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     const key = `retention:${cohort_date}`;
     const raw = await redis.get<string>(key);
     const existing = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : { cohort_date, leads_sent: 0, cc_sent: 0, grey: {}, enser: {} };
-    existing.enser = enser;
+    existing.enser = { ...(existing.enser||{}), ...enser };
     await redis.set(key, JSON.stringify(existing));
     return NextResponse.json({ success: true });
   } catch(e:any) {

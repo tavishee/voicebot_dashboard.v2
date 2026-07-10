@@ -791,9 +791,7 @@ export default function Dashboard(){
           <div style={{display:'flex',alignItems:'center',gap:8,marginTop:8,marginBottom:4,flexWrap:'wrap' as const}}>
             <button onClick={()=>setRetCumulative(false)} style={{padding:'4px 12px',borderRadius:4,border:`1px solid ${C.border}`,background:!retCumulative?C.blueM:'transparent',color:!retCumulative?'#fff':C.text2,cursor:'pointer',fontSize:12}}>Absolute</button>
             <button onClick={()=>setRetCumulative(true)} style={{padding:'4px 12px',borderRadius:4,border:`1px solid ${C.border}`,background:retCumulative?C.blueM:'transparent',color:retCumulative?'#fff':C.text2,cursor:'pointer',fontSize:12}}>Cumulative</button>
-            {retMetric==='enser'&&<><span style={{width:1,height:16,background:C.border,display:'inline-block',margin:'0 4px'}}/>
-            <button onClick={()=>setRetEnserDenom('sent')} style={{padding:'4px 12px',borderRadius:4,border:`1px solid ${C.border}`,background:retEnserDenom==='sent'?C.green:'transparent',color:retEnserDenom==='sent'?'#fff':C.text2,cursor:'pointer',fontSize:12}}>% of CC Received</button>
-            <button onClick={()=>setRetEnserDenom('attempted')} style={{padding:'4px 12px',borderRadius:4,border:`1px solid ${C.border}`,background:retEnserDenom==='attempted'?C.green:'transparent',color:retEnserDenom==='attempted'?'#fff':C.text2,cursor:'pointer',fontSize:12}}>% of CC Attempted</button></>}
+
           </div>
           {retRows.length===0
             ?<div style={{...card,textAlign:'center' as const,padding:40,color:C.text3}}>No retention data yet — upload daily Excel files via the "+ Data" tab</div>
@@ -819,11 +817,11 @@ export default function Dashboard(){
                       total+=absVal;
                       const cumVal=total; // cumulative = running sum up to this day
                       const val=retCumulative?cumVal:absVal;
-                      const denom = retMetric==='enser' ? (retEnserDenom==='attempted'?(row.cc_attempted||row.cc_sent||0):(row.cc_sent||0)) : (row.leads_sent||0);
+                      const denom = retMetric==='enser' ? (row.cc_attempted||row.cc_sent||0) : (row.leads_sent||0);
                       const p2 = denom>0 ? Math.round(val/denom*1000)/10 : 0;
                       cells.push({val,pct:p2});
                     }
-                    const denom2 = retMetric==='enser' ? (retEnserDenom==='attempted'?(row.cc_attempted||row.cc_sent||0):(row.cc_sent||0)) : (row.leads_sent||0);
+                    const denom2 = retMetric==='enser' ? (row.cc_attempted||row.cc_sent||0) : (row.leads_sent||0);
                     // In cumulative mode, total column shows same as last non-empty day (already the max)
                     // In absolute mode, total is sum of all days
                     const totalPct = denom2>0 ? Math.round(total/denom2*1000)/10 : 0;
@@ -831,7 +829,7 @@ export default function Dashboard(){
                     return(
                       <tr key={row.cohort_date} style={{borderBottom:`1px solid ${C.borderL}`}}>
                         <td style={{padding:'7px 12px',fontWeight:500,position:'sticky' as const,left:0,background:C.surface}}>{row.cohort_date?.slice(5)}</td>
-                        <td style={{padding:'7px 12px',textAlign:'right' as const,fontVariantNumeric:'tabular-nums' as const,color:C.text2}}>{(retMetric==='enser'?(row.cc_sent||0):(row.leads_sent||0)).toLocaleString()}</td>
+                        <td style={{padding:'7px 12px',textAlign:'right' as const,fontVariantNumeric:'tabular-nums' as const,color:C.text2}}>{(retMetric==='enser'?(row.cc_attempted||row.cc_sent||0):(row.leads_sent||0)).toLocaleString()}</td>
                         {cells.map((c2,i)=>(
                           <td key={i} style={{padding:'7px 12px',textAlign:'right' as const,whiteSpace:'nowrap' as const}}>
                             {c2.val>0
