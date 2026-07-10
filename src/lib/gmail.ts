@@ -192,11 +192,11 @@ export async function fetchGreylabsData(dateStr: string) {
     const leadsMatch = bodyText.match(/Total Leads[\s\S]*?([\d,]+)/);
     const leadCount = leadsMatch ? parseInt(leadsMatch[1].replace(/,/g,'')) : 0;
     console.log(`Candidate: subj="${subj}" sentIST=${sentDateIST} totalLeads=${leadCount}`);
-    // Prefer email sent on target date with highest lead count
-    if (sentDateIST === dateStr && leadCount > bestLeadCount) {
+    // Prefer the LATEST email sent on target date (Gmail returns newest first, so first match wins)
+    if (sentDateIST === dateStr && bestLeadCount === 0) {
       bestLeadCount = leadCount;
       bestId = m.id!;
-      console.log(`New best: ${m.id} totalLeads=${leadCount}`);
+      console.log(`Best match (latest same-day): ${m.id} totalLeads=${leadCount}`);
     }
   }
   console.log(`Using email: ${bestId} totalLeads=${bestLeadCount}`);
