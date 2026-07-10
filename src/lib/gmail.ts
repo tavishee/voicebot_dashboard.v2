@@ -59,7 +59,7 @@ function parseFunnelSection(section: string) {
     high:      extractNumber('High Intent', section),
     medium:    extractNumber('Medium Intent', section),
     low:       extractNumber('Low Intent', section),
-    callback:  extractNumber('Callback', section),
+    callback:  extractNumber('Callback with Agent', section),
   };
 }
 
@@ -84,7 +84,7 @@ async function extractLeadIds(gmail: any, messageId: string, attachmentId: strin
   const buffer = Buffer.from(att.data.data, 'base64');
   const wb = XLSX.read(buffer, { type: 'buffer' });
 
-  type SheetRow = { leadId: string; createdDate: string; connected: number; qualified: string };
+  type SheetRow = { leadId: string; createdDate: string; connected: number; qualified: string; quality: string };
 
   function getRowsFromSheet(sheetName: string): { ids: string[]; rows: SheetRow[] } {
     const found = wb.SheetNames.find(n => n.toLowerCase().includes(sheetName.toLowerCase()));
@@ -97,7 +97,7 @@ async function extractLeadIds(gmail: any, messageId: string, attachmentId: strin
     if (rawRows.length < 2) return { ids: [], rows: [] };
 
     let headerRowIdx = -1;
-    let leadIdCol = -1, createdCol = -1, connectedCol = -1, qualifiedCol = -1;
+    let leadIdCol = -1, createdCol = -1, connectedCol = -1, qualifiedCol = -1, qualityCol = -1;
     for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
       const headers = rawRows[i].map((h: any) => String(h || '').trim().toLowerCase());
       const li = headers.findIndex(h => h === 'lead id' || h === 'lead_id' || h === 'leadid');
@@ -107,6 +107,7 @@ async function extractLeadIds(gmail: any, messageId: string, attachmentId: strin
         createdCol   = headers.findIndex(h => h === 'created');
         connectedCol = headers.findIndex(h => h === 'connected');
         qualifiedCol = headers.findIndex(h => h === 'qualified');
+        qualityCol   = headers.findIndex(h => h === 'quality');
         break;
       }
     }
@@ -121,6 +122,7 @@ async function extractLeadIds(gmail: any, messageId: string, attachmentId: strin
       const qual     = String(r[qualifiedCol] || '').trim().toUpperCase();
       const created  = createdCol >= 0 ? String(r[createdCol] || '').trim() : '';
       const connected = connectedCol >= 0 ? Number(r[connectedCol] || 0) : 0;
+      const quality  = qualityCol >= 0 ? String(r[qualityCol] || '').trim() : '';
       if (!leadId || leadId === 'undefined' || leadId === 'null' || leadId === 'None') continue;
 
       // Parse created date "22-Jun-26" -> "2026-06-22"
@@ -133,7 +135,7 @@ async function extractLeadIds(gmail: any, messageId: string, attachmentId: strin
         if (mon) createdDate = yr + '-' + mon + '-' + cm[1].padStart(2,'0');
       }
 
-      rows.push({ leadId, createdDate, connected, qualified: qual });
+      rows.push({ leadId, createdDate, connected, qualified: qual, quality });
       if (qual === 'YES') ids.push(leadId);
     }
 
