@@ -191,18 +191,33 @@ export default function Dashboard(){
   };
 
   const runBulkSync=async()=>{
-    setManualCronLoading(true);setManualCronStatus('Running…');
+    setBulkSyncCancelled(false);
+    setManualCronLoading(true);setManualCronStatus('Starting bulk sync…');
     try{
-      const secret=(window as any).__CRON_SECRET||process.env.NEXT_PUBLIC_CRON_SECRET||'';
-      const r=await fetch(`/api/cron-trigger?date=${manualCronDate}`);
-      const d=await r.json();
-      if(d.error)throw new Error(d.error);
-      const gmail=d.gmail?.success?`✓ Gmail: ${d.gmail.fresh_sent} fresh, ${d.gmail.ret_sent} ret, ${d.gmail.cohorts_updated} cohorts updated`:`⚠ Gmail: ${d.gmail?.message||'failed'}`;
-      const enser=d.enser?.cc_sent!=null?`✓ Enser: cc_sent=${d.enser.cc_sent}`:d.enser?.skipped?`⚠ Enser: ${d.enser.skipped}`:`⚠ Enser: ${d.enser?.error||'failed'}`;
-      setManualCronStatus(`${gmail}\n${enser}`);
+      const dates:string[]=[];
+      const cur=new Date(manualCronDate+'T00:00:00Z');
+      const end=new Date(manualCronEndDate+'T00:00:00Z');
+      while(cur<=end){dates.push(cur.toISOString().slice(0,10));cur.setUTCDate(cur.getUTCDate()+1);}
+      const results:{date:string,gmail:string,enser:string}[]=[];
+      for(let i=0;i<dates.length;i++){
+        if(bulkSyncCancelled){setManualCronStatus('⚠ Stopped by user');break;}
+        const d=dates[i];
+        setBulkSyncProgress(`${i+1}/${dates.length} — ${d}`);
+        setManualCronStatus(`Syncing ${d}… (${i+1}/${dates.length})`);
+        try{
+          const r=await fetch(`/api/cron-trigger?date=${d}`);
+          const data=await r.json();
+          const gmail=data.gmail?.success?`✓ Gmail`:data.gmail?.message?.includes('not found')?`⚠ No email`:`✗ Gmail failed`;
+          const enser=data.enser?.cc_sent!=null?`✓ Enser(${data.enser.cc_sent})`:data.enser?.skipped?`⚠ Enser(auth)`:data.enser?.error?.includes('timeout')||data.enser?.error?.includes('network')?`⚠ Enser(offline)`:`✗ Enser`;
+          results.push({date:d,gmail,enser});
+        }catch(e2:any){results.push({date:d,gmail:'✗',enser:'✗'});}
+      }
+      const summary=results.map(r=>`${r.date}: ${r.gmail} | ${r.enser}`).join('\n');
+      setManualCronStatus(`✓ Done (${results.length} dates):\n${summary}`);
       fetch('/api/data').then(r=>r.json()).then(d=>setRows(d.rows||[]));
+      fetch('/api/retention').then(r=>r.json()).then(d=>setRetRows(d.rows||[]));
     }catch(e:any){setManualCronStatus(`✗ ${e.message}`);}
-    finally{setManualCronLoading(false);}
+    finally{setManualCronLoading(false);setBulkSyncProgress('');}
   };
   const runBackfill=async()=>{
     setBfLoading(true);setBfStatus('Running...');
