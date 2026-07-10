@@ -8,6 +8,10 @@ function validateQuery(sql) {
     'recent_search.enser_callback_data',
     'glue_catalog.recent_search_partition.enser_callback_data',
     'glue_catalog.motor_proposal_3',
+    'hive.recent_search.enser_callback_data_snapshot_v3',
+    'paytm_ct_reports.cdo_insurance_motor_snapshot_v3',
+    'marketplace.sales_order_snapshot_v3',
+    'marketplace.sales_order_item_snapshot_v3',
   ];
   const hasAllowedTable = allowedTables.some(t => normalized.includes(t));
   if ((!/^WITH\b/i.test(normalized) && !/^SELECT\b/i.test(normalized)) || forbidden.test(normalized) || !hasAllowedTable) {
