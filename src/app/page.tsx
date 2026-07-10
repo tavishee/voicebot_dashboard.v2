@@ -317,7 +317,7 @@ export default function Dashboard(){
             body:JSON.stringify({date:d,cc_sent:ccSent,cc_attempted:ccAttempted,cc_connected:ccConnected,cc_converted:day0Conv,cc_churn:0,cc_conversion_on_connect:ccConnected>0?day0Conv/ccConnected*100:0})});
         }
         log.push(`${d} Enser:✓ sent=${ccSent} attempted=${ccAttempted} conv=${day0Conv}`);
-      }catch(e:any){log.push(`${d} Enser:✗ ${e.message?.slice(0,40)}`);}
+      }catch(e:any){log.push(`${d} Enser:✗ ${e.message?.slice(0,300)}`);}
     }
 
     setBulkStatus(`✓ Done (${dates.length} dates):\n${log.join('\n')}`);
