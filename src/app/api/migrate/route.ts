@@ -101,5 +101,20 @@ export async function GET(request: Request) {
     }
   }
 
+  // 6. Patch Jul 02-03 cc_sent from MIS spreadsheet (system issue on those dates)
+  const ccPatch: Record<string, {cc_sent:number}> = {
+    '2026-07-02': {cc_sent: 472},
+    '2026-07-03': {cc_sent: 457},
+  };
+  for (const [date, cc] of Object.entries(ccPatch)) {
+    const key = `funnel:row:v3:${date}`;
+    const raw = await redis.get<string>(key);
+    const row: any = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : { date };
+    row.cc_sent = cc.cc_sent;
+    if (!row.cc_attempted) row.cc_attempted = cc.cc_sent;
+    await redis.set(key, JSON.stringify(row));
+    results[`cc_patch:${date}`] = `cc_sent=${cc.cc_sent}`;
+  }
+
   return NextResponse.json({ success: true, count: Object.keys(results).length, results });
 }
