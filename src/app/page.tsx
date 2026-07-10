@@ -74,6 +74,11 @@ export default function Dashboard(){
   const[ssAuthUrl,setSsAuthUrl]=useState('');
   const[retRows,setRetRows]=useState<any[]>([]);
   const[retSyncDate,setRetSyncDate]=useState(yesterdayStr());
+  const[bulkFromDate,setBulkFromDate]=useState('2026-06-23');
+  const[bulkToDate,setBulkToDate]=useState(yesterdayStr());
+  const[bulkStatus,setBulkStatus]=useState('');
+  const[bulkLoading,setBulkLoading]=useState(false);
+  const[bulkCancelled,setBulkCancelled]=useState(false);
   const[manualCronDate,setManualCronDate]=useState(yesterdayStr());
   const[startupStatus,setStartupStatus]=useState('');
   const[startupDone,setStartupDone]=useState(false);
@@ -231,6 +236,73 @@ export default function Dashboard(){
   };
 
 
+  // Unified bulk sync — Gmail + Enser cc_sent + Enser retention conversions for a date range
+  const runFullBulkSync=async()=>{
+    setBulkCancelled(false);setBulkLoading(true);setBulkStatus('Starting…');
+    // Build date list
+    const dates:string[]=[];
+    const cur=new Date(bulkFromDate+'T00:00:00Z');
+    const end=new Date(bulkToDate+'T00:00:00Z');
+    while(cur<=end){dates.push(cur.toISOString().slice(0,10));cur.setUTCDate(cur.getUTCDate()+1);}
+    const log:string[]=[];
+    // Step 1: Gmail + grey retention for all dates
+    for(let i=0;i<dates.length;i++){
+      if(bulkCancelled)break;
+      const d=dates[i];
+      setBulkStatus(`[${i+1}/${dates.length}] Gmail: ${d}`);
+      try{
+        const r=await fetch(`/api/cron-trigger?date=${d}`);
+        const data=await r.json();
+        log.push(`${d} Gmail: ${data.gmail?.success?'✓':data.gmail?.message?.includes('not found')?'⚠ no email':'✗'}`);
+      }catch{log.push(`${d} Gmail: ✗`);}
+    }
+    // Step 2: Enser cc_sent + cc_attempted for all dates (via extension)
+    setBulkStatus('Checking Superset extension…');
+    const extReady=await new Promise<boolean>(res=>{
+      const id=Math.random().toString(36).slice(2);
+      const t=setTimeout(()=>{window.removeEventListener('message',h);res(false);},2000);
+      function h(e:MessageEvent){if(e.data?.source==='superset-bridge'&&e.data?.id===id){clearTimeout(t);window.removeEventListener('message',h);res(e.data.success);}}
+      window.addEventListener('message',h);
+      window.postMessage({source:'voicebot-dashboard',type:'PING',id},'*');
+    });
+    if(extReady){
+      for(let i=0;i<dates.length;i++){
+        if(bulkCancelled)break;
+        const d=dates[i];
+        setBulkStatus(`[${i+1}/${dates.length}] Enser sync: ${d}`);
+        // Get lead IDs for this date
+        try{
+          const lidRes=await fetch(`/api/lead-ids?date=${d}`);
+          const lidData=await lidRes.json();
+          const ids:string[]=[...(lidData.freshIds||[]),...(lidData.retainedIds||[])];
+          if(!ids.length){log.push(`${d} Enser: ⚠ no lead IDs`);continue;}
+          // Import query functions
+          const {receivedQuery,combinedQuery}=await import('@/app/api/superset/queries');
+          // Run cc_sent query
+          const ccSql=receivedQuery(d,ids);
+          const ccRows=await new Promise<any>((res,rej)=>{
+            const id2=Math.random().toString(36).slice(2);
+            const t=setTimeout(()=>{window.removeEventListener('message',h2);rej(new Error('timeout'));},60000);
+            function h2(e:MessageEvent){if(e.data?.source==='superset-bridge'&&e.data?.id===id2){clearTimeout(t);window.removeEventListener('message',h2);e.data.success?res(e.data.data):rej(new Error(e.data.error));}}
+            window.addEventListener('message',h2);
+            window.postMessage({source:'voicebot-dashboard',type:'RUN_QUERY',id:id2,sql:ccSql},'*');
+          });
+          const ccSent=Number(ccRows?.[0]?.cc_sent)||0;
+          const ccAttempted=Number(ccRows?.[0]?.cc_attempted)||0;
+          const ccConnected=Number(ccRows?.[0]?.cc_connected)||0;
+          await fetch('/api/enser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:d,cc_sent:ccSent,cc_attempted:ccAttempted,cc_connected:ccConnected,cc_converted:0,cc_churn:0,cc_conversion_on_connect:0})});
+          log.push(`${d} Enser: ✓ sent=${ccSent} attempted=${ccAttempted}`);
+        }catch(e:any){log.push(`${d} Enser: ✗ ${e.message?.slice(0,30)}`);}
+      }
+    }else{
+      log.push('Enser: ⚠ Extension not detected — skipped cc_sent sync');
+    }
+    setBulkStatus(`✓ Done (${dates.length} dates):\n${log.join('\n')}`);
+    setBulkLoading(false);
+    fetch('/api/data').then(r=>r.json()).then(d=>setRows(d.rows||[]));
+    fetch('/api/retention').then(r=>r.json()).then(d=>setRetRows(d.rows||[]));
+  };
+
   const syncRetention=async()=>{
     setRetLoading(true);setRetStatus('Checking extension…');
     try{
@@ -268,7 +340,8 @@ export default function Dashboard(){
         const values=chunk.map((id:string)=>`('${id.replace(/'/g,"''")}')` ).join(', ');
         return `SELECT CAST(id AS VARCHAR) AS lead_id FROM (VALUES ${values}) AS t(id)`;
       }).join('\n    UNION ALL\n    ');
-      const sql=`WITH qualified_leads AS (\n    ${qualifiedLeadSources}\n),policy_purchases AS (SELECT CAST(COALESCE(p.created_by,p.owned_by) AS VARCHAR) AS customer_id,DATE(MIN(oi.created_on)) AS purchase_date,p.proposal_id,oi.oms_item_id,MAX(CASE WHEN oi.status IN ('issued','policy_pdf_generated') THEN 1 ELSE 0 END) AS issued_flag FROM (SELECT id,oms_order_id,oms_item_id,price,status,created_on,ROW_NUMBER() OVER (PARTITION BY id ORDER BY modified_on DESC) AS rn FROM glue_catalog.motor_proposal_3.order_item WHERE modified_on>='${retSyncDate} 00:00:00' AND modified_on<'${lookbackDate} 00:00:00' AND date>='${cohortFmt}' AND date<='${lookbackFmt}') oi JOIN (SELECT id,oms_order_id,proposal_id,ROW_NUMBER() OVER (PARTITION BY id ORDER BY modified_on DESC) AS rn FROM glue_catalog.motor_proposal_3.order_detail WHERE modified_on>='${retSyncDate} 00:00:00' AND modified_on<'${lookbackDate} 00:00:00' AND date>='${cohortFmt}' AND date<='${lookbackFmt}') od ON oi.oms_order_id=od.oms_order_id AND oi.rn=1 AND od.rn=1 JOIN (SELECT id,proposal_id,vehicle_type,created_by,owned_by,coverage_type,ROW_NUMBER() OVER (PARTITION BY id ORDER BY modified_on DESC) AS rn FROM glue_catalog.motor_proposal_3.proposal WHERE modified_on>='${retSyncDate} 00:00:00' AND modified_on<'${lookbackDate} 00:00:00' AND date>='${cohortFmt}' AND date<='${lookbackFmt}') p ON p.proposal_id=od.proposal_id AND p.rn=1 WHERE p.coverage_type IN ('comprehensive_1y_1y','own_damage_1y','third_party_1y') AND oi.created_on>='${retSyncDate} 00:00:00' AND oi.created_on<'${lookbackDate} 00:00:00' AND CAST(COALESCE(p.created_by,p.owned_by) AS VARCHAR) IN (SELECT lead_id FROM qualified_leads) GROUP BY CAST(COALESCE(p.created_by,p.owned_by) AS VARCHAR),p.proposal_id,oi.oms_item_id)\nSELECT DATEDIFF(DATE(purchase_date),DATE('${retSyncDate}')) AS day_number,COUNT(DISTINCT customer_id) AS converted FROM policy_purchases WHERE purchase_date>='${retSyncDate}' AND purchase_date<'${nextDate}' AND issued_flag=1 GROUP BY DATEDIFF(DATE(purchase_date),DATE('${retSyncDate}')) ORDER BY day_number`;
+      // Use marketplace tables (new Superset) for conversion data
+      const sql=`WITH qualified_leads AS (\n    ${qualifiedLeadSources}\n)\nSELECT\n  DATEDIFF(date(a.created_at), date('${retSyncDate}')) AS day_number,\n  COUNT(DISTINCT a.customer_id) AS converted\nFROM marketplace.sales_order_snapshot_v3 a\nLEFT JOIN marketplace.sales_order_item_snapshot_v3 b ON a.id = b.order_id\nWHERE b.vertical_id = 173\n  AND b.name NOT IN ('Health Insurance','Health Advantage Plus','HDFC Life Term Insurance','Term Life Insurance','Compulsory Personal Accident 4W','Compulsory Personal Accident 2W','Two Wheeler Insurance','Compulsory Personal Accident 2W - Standalone')\n  AND a.dl_last_updated >= date('${retSyncDate}')\n  AND a.dl_last_updated < date('${retSyncDate}') + interval '50' day\n  AND b.dl_last_updated >= date('${retSyncDate}')\n  AND b.dl_last_updated < date('${retSyncDate}') + interval '50' day\n  AND date(a.created_at) >= date('${retSyncDate}')\n  AND date(a.created_at) < date('${nextDate}')\n  AND CAST(a.customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)\nGROUP BY 1\nORDER BY 1`;
       const convRows=await extensionCall2('RUN_QUERY',{sql});
       const enser:Record<string,{converted:number}>={};
       for(const r of (convRows||[])){const d=Number(r.day_number);if(d>=0&&d<=6)enser[`day${d}`]={converted:Number(r.converted)||0};}
@@ -790,18 +863,18 @@ export default function Dashboard(){
 
           {/* Manual daily fetch — runs full cron (Gmail + grey retention + Enser cc_sent) for any date */}
           <div style={card}>
-            <div style={cardT}><span style={bBot}>Bulk Sync</span> Sync a date range</div>
-            <div style={{fontSize:12,color:C.text3,marginBottom:8}}>Fetches Gmail + grey retention + Enser cc_sent for every date in range. Runs one date at a time.</div>
+            <div style={cardT}><span style={bBot}>Sync All</span> Full sync for a date range</div>
+            <div style={{fontSize:12,color:C.text3,marginBottom:8}}>Gmail + grey retention + Enser cc_sent for every date. Open Superset in a tab for Enser sync.</div>
             <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap' as const}}>
-              <input style={{...inp,width:130}} type="date" value={manualCronDate} onChange={e=>setManualCronDate(e.target.value)}/>
+              <input style={{...inp,width:130}} type="date" value={bulkFromDate} onChange={e=>setBulkFromDate(e.target.value)}/>
               <span style={{fontSize:12,color:C.text3}}>to</span>
-              <input style={{...inp,width:130}} type="date" value={manualCronEndDate} onChange={e=>setManualCronEndDate(e.target.value)}/>
-              <button style={{...btnP,background:C.blueM}} onClick={runBulkSync} disabled={manualCronLoading}>
-                {manualCronLoading?`Syncing… (${bulkSyncProgress})`:'Bulk Sync'}
+              <input style={{...inp,width:130}} type="date" value={bulkToDate} onChange={e=>setBulkToDate(e.target.value)}/>
+              <button style={{...btnP,background:C.blueM}} onClick={runFullBulkSync} disabled={bulkLoading}>
+                {bulkLoading?'Syncing…':'Sync All'}
               </button>
-              {manualCronLoading&&<button style={{...btnP,background:C.red,padding:'6px 10px'}} onClick={()=>setBulkSyncCancelled(true)}>Stop</button>}
+              {bulkLoading&&<button style={{...btnP,background:C.red,padding:'6px 10px'}} onClick={()=>setBulkCancelled(true)}>Stop</button>}
             </div>
-            {manualCronStatus&&<div style={{fontSize:12,padding:'8px 10px',marginTop:6,borderRadius:6,background:manualCronStatus.startsWith('✓')?C.greenL:manualCronStatus.startsWith('⚠')?'#fffbe6':C.redL,color:manualCronStatus.startsWith('✓')?C.green:manualCronStatus.startsWith('⚠')?'#7c4a00':C.red,whiteSpace:'pre-wrap'}}>{manualCronStatus}</div>}
+            {bulkStatus&&<div style={{fontSize:12,padding:'8px 10px',marginTop:6,borderRadius:6,background:bulkStatus.startsWith('✓')?C.greenL:bulkStatus.startsWith('⚠')?'#fffbe6':C.redL,color:bulkStatus.startsWith('✓')?C.green:bulkStatus.startsWith('⚠')?'#7c4a00':C.red,whiteSpace:'pre-wrap'}}>{bulkStatus}</div>}
           </div>
           {/* GreyLabs backfill */}
           <div style={card}>
