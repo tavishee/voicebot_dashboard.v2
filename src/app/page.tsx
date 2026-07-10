@@ -79,10 +79,14 @@ export default function Dashboard(){
   const[startupDone,setStartupDone]=useState(false);
   const[manualCronStatus,setManualCronStatus]=useState('');
   const[manualCronLoading,setManualCronLoading]=useState(false);
+  const[manualCronEndDate,setManualCronEndDate]=useState(yesterdayStr());
+  const[bulkSyncProgress,setBulkSyncProgress]=useState('');
+  const[bulkSyncCancelled,setBulkSyncCancelled]=useState(false);
   const[retStatus,setRetStatus]=useState('');
   const[retLoading,setRetLoading]=useState(false);
   const[retMetric,setRetMetric]=useState<'connected'|'qualified'|'enser'>('connected');
   const[retCumulative,setRetCumulative]=useState(false);
+  const[retEnserDenom,setRetEnserDenom]=useState<'sent'|'attempted'>('sent');
 
   const load=()=>{
     fetch('/api/data').then(r=>r.json())
@@ -428,9 +432,9 @@ export default function Dashboard(){
             {[
               {l:'Fresh qualify %',v:pct(fs.fq,fs.fc)+'%',s:`${fs.fq.toLocaleString()} qualified`},
               {l:'Retained qualify %',v:pct(fs.rq,fs.rc)+'%',s:`${fs.rq.toLocaleString()} qualified`},
-              {l:'CC convert rate',v:pct(fs.cv,fs.cc)+'%',s:`${fs.cv.toLocaleString()} / ${fs.cc.toLocaleString()}`},
-              {l:'Conv on connect',v:fmtPct(fRows.length?fRows.reduce((s,r)=>s+(r.cc_conversion_on_connect||0),0)/fRows.length:0),s:'avg'},
-              {l:'End-to-end',v:pct(fs.cv,fs.bs)+'%',s:`${fs.cv.toLocaleString()} from ${fs.bs.toLocaleString()}`},
+              {l:'High Intent conv %',v:pct(fs.cv,fRows.reduce((s,r)=>s+(r.high_intent||0),0))+'%',s:`${fRows.reduce((s,r)=>s+(r.high_intent||0),0).toLocaleString()} high intent`},
+              {l:'Medium Intent conv %',v:pct(fs.cv,fRows.reduce((s,r)=>s+(r.medium_intent||0),0))+'%',s:`${fRows.reduce((s,r)=>s+(r.medium_intent||0),0).toLocaleString()} medium intent`},
+              {l:'Callback conv %',v:pct(fs.cv,fRows.reduce((s,r)=>s+(r.callback_agent||r.fresh_callback+r.ret_callback||0),0))+'%',s:`${fRows.reduce((s,r)=>s+(r.callback_agent||r.fresh_callback+r.ret_callback||0),0).toLocaleString()} callback`},
             ].map(k=>(
               <div key={k.l} style={kpi}>
                 <div style={{fontSize:10,color:C.text3,textTransform:'uppercase' as const,letterSpacing:'.05em',marginBottom:5}}>{k.l}</div>
@@ -673,9 +677,12 @@ export default function Dashboard(){
               <option value="enser">Enser Conversion</option>
             </select>
           </div>
-          <div style={{display:'flex',alignItems:'center',gap:8,marginTop:8,marginBottom:4}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginTop:8,marginBottom:4,flexWrap:'wrap' as const}}>
             <button onClick={()=>setRetCumulative(false)} style={{padding:'4px 12px',borderRadius:4,border:`1px solid ${C.border}`,background:!retCumulative?C.blueM:'transparent',color:!retCumulative?'#fff':C.text2,cursor:'pointer',fontSize:12}}>Absolute</button>
             <button onClick={()=>setRetCumulative(true)} style={{padding:'4px 12px',borderRadius:4,border:`1px solid ${C.border}`,background:retCumulative?C.blueM:'transparent',color:retCumulative?'#fff':C.text2,cursor:'pointer',fontSize:12}}>Cumulative</button>
+            {retMetric==='enser'&&<><span style={{width:1,height:16,background:C.border,display:'inline-block',margin:'0 4px'}}/>
+            <button onClick={()=>setRetEnserDenom('sent')} style={{padding:'4px 12px',borderRadius:4,border:`1px solid ${C.border}`,background:retEnserDenom==='sent'?C.green:'transparent',color:retEnserDenom==='sent'?'#fff':C.text2,cursor:'pointer',fontSize:12}}>% of CC Received</button>
+            <button onClick={()=>setRetEnserDenom('attempted')} style={{padding:'4px 12px',borderRadius:4,border:`1px solid ${C.border}`,background:retEnserDenom==='attempted'?C.green:'transparent',color:retEnserDenom==='attempted'?'#fff':C.text2,cursor:'pointer',fontSize:12}}>% of CC Attempted</button></>}
           </div>
           {retRows.length===0
             ?<div style={{...card,textAlign:'center' as const,padding:40,color:C.text3}}>No retention data yet — upload daily Excel files via the "+ Data" tab</div>
@@ -701,11 +708,11 @@ export default function Dashboard(){
                       total+=absVal;
                       const cumVal=total; // cumulative = running sum up to this day
                       const val=retCumulative?cumVal:absVal;
-                      const denom = retMetric==='enser' ? (row.cc_sent||0) : (row.leads_sent||0);
+                      const denom = retMetric==='enser' ? (retEnserDenom==='attempted'?(row.cc_attempted||row.cc_sent||0):(row.cc_sent||0)) : (row.leads_sent||0);
                       const p2 = denom>0 ? Math.round(val/denom*1000)/10 : 0;
                       cells.push({val,pct:p2});
                     }
-                    const denom2 = retMetric==='enser' ? (row.cc_sent||0) : (row.leads_sent||0);
+                    const denom2 = retMetric==='enser' ? (retEnserDenom==='attempted'?(row.cc_attempted||row.cc_sent||0):(row.cc_sent||0)) : (row.leads_sent||0);
                     // In cumulative mode, total column shows same as last non-empty day (already the max)
                     // In absolute mode, total is sum of all days
                     const totalPct = denom2>0 ? Math.round(total/denom2*1000)/10 : 0;
@@ -768,15 +775,18 @@ export default function Dashboard(){
 
           {/* Manual daily fetch — runs full cron (Gmail + grey retention + Enser cc_sent) for any date */}
           <div style={card}>
-            <div style={cardT}><span style={bBot}>Auto Fetch</span> Run daily sync for a date</div>
-            <div style={{fontSize:12,color:C.text3,marginBottom:8}}>Fetches Gmail, saves grey retention, syncs Enser cc_sent — same as the nightly cron.</div>
-            <div style={{display:'flex',gap:8,alignItems:'center'}}>
-              <input style={inp} type="date" value={manualCronDate} onChange={e=>setManualCronDate(e.target.value)}/>
-              <button style={{...btnP,background:C.blueM}} onClick={runManualCron} disabled={manualCronLoading}>
-                {manualCronLoading?'Running…':'Fetch & Sync'}
+            <div style={cardT}><span style={bBot}>Bulk Sync</span> Sync a date range</div>
+            <div style={{fontSize:12,color:C.text3,marginBottom:8}}>Fetches Gmail + grey retention + Enser cc_sent for every date in range. Runs one date at a time.</div>
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap' as const}}>
+              <input style={{...inp,width:130}} type="date" value={manualCronDate} onChange={e=>setManualCronDate(e.target.value)}/>
+              <span style={{fontSize:12,color:C.text3}}>to</span>
+              <input style={{...inp,width:130}} type="date" value={manualCronEndDate} onChange={e=>setManualCronEndDate(e.target.value)}/>
+              <button style={{...btnP,background:C.blueM}} onClick={runBulkSync} disabled={manualCronLoading}>
+                {manualCronLoading?`Syncing… (${bulkSyncProgress})`:'Bulk Sync'}
               </button>
+              {manualCronLoading&&<button style={{...btnP,background:C.red,padding:'6px 10px'}} onClick={()=>setBulkSyncCancelled(true)}>Stop</button>}
             </div>
-            {manualCronStatus&&<div style={{fontSize:12,padding:'8px 10px',marginTop:6,borderRadius:6,background:manualCronStatus.startsWith('✓')?C.greenL:C.redL,color:manualCronStatus.startsWith('✓')?C.green:C.red,whiteSpace:'pre-wrap'}}>{manualCronStatus}</div>}
+            {manualCronStatus&&<div style={{fontSize:12,padding:'8px 10px',marginTop:6,borderRadius:6,background:manualCronStatus.startsWith('✓')?C.greenL:manualCronStatus.startsWith('⚠')?'#fffbe6':C.redL,color:manualCronStatus.startsWith('✓')?C.green:manualCronStatus.startsWith('⚠')?'#7c4a00':C.red,whiteSpace:'pre-wrap'}}>{manualCronStatus}</div>}
           </div>
           {/* GreyLabs backfill */}
           <div style={card}>
