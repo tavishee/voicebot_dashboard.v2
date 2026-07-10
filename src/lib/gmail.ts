@@ -170,40 +170,36 @@ export async function fetchGreylabsData(dateStr: string) {
   const targetLabel = `${dd}-${mon3}-${yyyy.slice(2)}`; // e.g. "02-Jul-26"
   console.log(`Looking for email with label: ${targetLabel}`);
   let bestId = messages[0].id!;
-  // Find the best matching email:
-  // - Must have targetLabel (e.g. "02-Jul-26") in subject
-  // - Must be sent ON the target date (not a resend on a later date)
-  // Gmail returns newest first, so iterate and pick the FIRST match sent on target date
-  const targetDatePrefix = dateStr; // "2026-07-02"
-  let foundMatch = false;
+  let bestLeadCount = 0;
+  // Find all emails matching targetLabel sent on the target date
+  // Pick the one with the highest Total Leads count (most complete/correct report)
   for (const m of messages.slice(0, 10)) {
     const preview = await gmail.users.messages.get({ userId: 'me', id: m.id!, format: 'metadata', metadataHeaders: ['Subject', 'Date'] });
     const subj = preview.data.payload?.headers?.find((h:any) => h.name === 'Subject')?.value || '';
     const sentDate = preview.data.payload?.headers?.find((h:any) => h.name === 'Date')?.value || '';
-    // Parse sent date to YYYY-MM-DD in IST (UTC+5:30)
     let sentDateIST = '';
     try {
       const d = new Date(sentDate);
       const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
       sentDateIST = ist.toISOString().slice(0, 10);
     } catch {}
-    console.log(`Candidate: subject="${subj}" sentIST=${sentDateIST}`);
-    if (subj.includes(targetLabel) && sentDateIST === targetDatePrefix) {
+    if (!subj.includes(targetLabel)) continue;
+    // Get the full message to check Total Leads count
+    const full = await gmail.users.messages.get({ userId: 'me', id: m.id!, format: 'full' });
+    const bodyPart = full.data.payload?.parts?.find((p:any) => p.mimeType === 'text/plain') || full.data.payload;
+    const bodyData = bodyPart?.body?.data || bodyPart?.parts?.[0]?.body?.data || '';
+    const bodyText = bodyData ? Buffer.from(bodyData, 'base64').toString('utf-8') : '';
+    const leadsMatch = bodyText.match(/Total Leads[\s\S]*?([\d,]+)/);
+    const leadCount = leadsMatch ? parseInt(leadsMatch[1].replace(/,/g,'')) : 0;
+    console.log(`Candidate: subj="${subj}" sentIST=${sentDateIST} totalLeads=${leadCount}`);
+    // Prefer email sent on target date with highest lead count
+    if (sentDateIST === dateStr && leadCount > bestLeadCount) {
+      bestLeadCount = leadCount;
       bestId = m.id!;
-      foundMatch = true;
-      console.log(`Best match (sent on target date): ${subj} at ${sentDateIST}`);
-      break; // First match sent on the right date = latest same-day email = most accurate
+      console.log(`New best: ${m.id} totalLeads=${leadCount}`);
     }
   }
-  // Fallback: any email with targetLabel regardless of send date
-  if (!foundMatch) {
-    for (const m of messages.slice(0, 10)) {
-      const preview = await gmail.users.messages.get({ userId: 'me', id: m.id!, format: 'metadata', metadataHeaders: ['Subject'] });
-      const subj = preview.data.payload?.headers?.find((h:any) => h.name === 'Subject')?.value || '';
-      if (subj.includes(targetLabel)) { bestId = m.id!; console.log(`Fallback match: ${subj}`); break; }
-    }
-  }
-  console.log(`Using email: ${bestId}`);
+  console.log(`Using email: ${bestId} totalLeads=${bestLeadCount}`);
   const msg = await gmail.users.messages.get({ userId: 'me', id: bestId, format: 'full' });
   const body = getEmailBody(msg.data.payload);
   if (!body) return null;
