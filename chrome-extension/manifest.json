@@ -4,7 +4,7 @@
   "version": "1.0.9",
   "description": "Runs approved Voicebot dashboard queries through the user's authenticated Superset session.",
   "permissions": ["scripting", "tabs", "storage", "declarativeNetRequestWithHostAccess"],
-  "host_permissions": ["https://insurance-analytic-platform.paytminsurance.co.in/*"],
+  "host_permissions": ["https://cdp-query.platform.mypaytm.com/*"],
   "background": { "service_worker": "background.js" },
   "declarative_net_request": {
     "rule_resources": [{ "id": "superset_headers", "enabled": true, "path": "rules.json" }]

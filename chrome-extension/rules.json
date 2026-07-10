@@ -7,11 +7,11 @@
       "requestHeaders": [{
         "header": "Referer",
         "operation": "set",
-        "value": "https://insurance-analytic-platform.paytminsurance.co.in/sqllab/"
+        "value": "https://cdp-query.platform.mypaytm.com/sqllab/"
       }]
     },
     "condition": {
-      "urlFilter": "||insurance-analytic-platform.paytminsurance.co.in/api/v1/",
+      "urlFilter": "||cdp-query.platform.mypaytm.com/api/v1/",
       "resourceTypes": ["xmlhttprequest"]
     }
   }
