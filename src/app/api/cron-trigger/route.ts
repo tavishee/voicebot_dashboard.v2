@@ -33,27 +33,56 @@ export async function GET(request: Request) {
     } else {
       const { fresh, retained, freshIds, retainedIds, freshRows, retainedRows } = parsed;
 
+      // Compute intent tier counts directly from row-level Quality column (more reliable than email-body regex)
+      const freshTiers = { high:0, medium:0, low:0, callback:0 };
+      for (const r of (freshRows||[])) {
+        const q = String(r.quality||'').trim();
+        if (q === 'High Intent') freshTiers.high++;
+        else if (q === 'Medium Intent') freshTiers.medium++;
+        else if (q === 'Low Intent') freshTiers.low++;
+        else if (q === 'Callback with Agent') freshTiers.callback++;
+      }
+      const retTiers = { high:0, medium:0, low:0, callback:0 };
+      for (const r of (retainedRows||[])) {
+        const q = String(r.quality||'').trim();
+        if (q === 'High Intent') retTiers.high++;
+        else if (q === 'Medium Intent') retTiers.medium++;
+        else if (q === 'Low Intent') retTiers.low++;
+        else if (q === 'Callback with Agent') retTiers.callback++;
+      }
+      // Use row-level tier counts when available (row data exists), else fall back to email body parse
+      const hasRowTiers = (freshRows||[]).length > 0;
+
       // Save funnel summary
       await saveGreylabsOnly(date, {
         fresh_sent: fresh?.sent||0, fresh_dialled: fresh?.dialled||0,
         fresh_connected: fresh?.connected||0, fresh_qualified: fresh?.qualified||0,
-        fresh_high: fresh?.high||0, fresh_medium: fresh?.medium||0,
-        fresh_low: fresh?.low||0, fresh_callback: fresh?.callback||0,
+        fresh_high: hasRowTiers ? freshTiers.high : (fresh?.high||0),
+        fresh_medium: hasRowTiers ? freshTiers.medium : (fresh?.medium||0),
+        fresh_low: hasRowTiers ? freshTiers.low : (fresh?.low||0),
+        fresh_callback: hasRowTiers ? freshTiers.callback : (fresh?.callback||0),
         ...(retained ? {
           ret_sent: retained.sent||0, ret_dialled: retained.dialled||0,
           ret_connected: retained.connected||0, ret_qualified: retained.qualified||0,
-          ret_high: retained.high||0, ret_medium: retained.medium||0,
-          ret_low: retained.low||0, ret_callback: retained.callback||0,
+          ret_high: hasRowTiers ? retTiers.high : (retained.high||0),
+          ret_medium: hasRowTiers ? retTiers.medium : (retained.medium||0),
+          ret_low: hasRowTiers ? retTiers.low : (retained.low||0),
+          ret_callback: hasRowTiers ? retTiers.callback : (retained.callback||0),
         } : {}),
       });
 
-      // Save lead IDs
+      // Save lead IDs + intent tier map (leadId -> High Intent/Medium Intent/Callback with Agent/Low Intent)
       const fIds = freshIds || [];
       const rIds = retainedIds || [];
+      const tierMap: Record<string,string> = {};
+      for (const r of [...(freshRows||[]), ...(retainedRows||[])]) {
+        if (r.leadId && r.quality) tierMap[r.leadId] = r.quality;
+      }
       if (fIds.length || rIds.length) {
         await redis.set(`lead_ids:${date}`, JSON.stringify({
           freshIds: fIds, retainedIds: rIds,
-          allIds: Array.from(new Set([...fIds, ...rIds]))
+          allIds: Array.from(new Set([...fIds, ...rIds])),
+          tierMap
         }));
         await redis.expire(`lead_ids:${date}`, 60 * 60 * 24 * 90);
       }
