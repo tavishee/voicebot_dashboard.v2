@@ -190,7 +190,7 @@ export default function Dashboard(){
     } finally { setESaving(false); }
   };
 
-  const runManualCron=async()=>{
+  const runBulkSync=async()=>{
     setManualCronLoading(true);setManualCronStatus('Running…');
     try{
       const secret=(window as any).__CRON_SECRET||process.env.NEXT_PUBLIC_CRON_SECRET||'';
