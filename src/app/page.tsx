@@ -549,10 +549,7 @@ export default function Dashboard(){
                     <td style={{padding:'6px 10px',fontWeight:600,color:C.amber,position:'sticky' as const,left:0,background:C.amberL+'22'}}>Total qualified</td>
                     {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:C.amber,fontWeight:600}}>{(r.bot_qualified||0).toLocaleString()}</td>)}
                   </tr>
-                  <tr style={{borderBottom:`2px dashed ${C.amber}`}}>
-                    <td style={{padding:'6px 10px',color:C.amber,fontStyle:'italic',position:'sticky' as const,left:0,background:C.surface}}>Gap (qual → CC)</td>
-                    {fRows.map(r=><td key={r.date} style={{padding:'6px 10px',textAlign:'right' as const,color:C.amber}}>{r.cc_sent>0?((r.bot_qualified||0)-(r.cc_sent||0)).toLocaleString():'—'}</td>)}
-                  </tr>
+                  <tr style={{borderBottom:`2px dashed ${C.amber}`}}></tr>
                   <tr style={{background:C.greenL+'44'}}><td colSpan={fRows.length+1} style={{padding:'6px 10px',fontWeight:700,fontSize:11,textTransform:'uppercase' as const,letterSpacing:'.06em',color:C.green,position:'sticky' as const,left:0}}>Call Centre (bot-qualified leads only)</td></tr>
                   {[{l:'CC received',k:'cc_sent'},{l:'CC attempted',k:'cc_attempted'},{l:'CC connected',k:'cc_connected'},{l:'CC converted',k:'cc_converted'}].map((row,ri)=>(
                     <tr key={row.k} style={{borderBottom:`1px solid ${C.borderL}`}}>
