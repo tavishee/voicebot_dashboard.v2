@@ -75,25 +75,36 @@ export function receivedQuery(date: string, leadIds: string[]) {
   return `
 WITH qualified_leads AS (
     ${qualifiedLeadSources}
-)
-SELECT
-  COUNT(DISTINCT customer_id) AS cc_sent,
-  COUNT(DISTINCT CASE WHEN COALESCE(disposition1,'') <> ''
-    OR COALESCE(disposition2,'') <> '' OR COALESCE(disposition3,'') <> ''
-    THEN customer_id END) AS cc_attempted,
-  COUNT(DISTINCT CASE WHEN
-    COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',1) AS INT),0)*3600 +
-    COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',2) AS INT),0)*60 +
-    COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',3) AS INT),0) > 0
-    THEN customer_id END) AS cc_connected
-FROM hive.recent_search.enser_callback_data_snapshot_v3
-WHERE (source = 'enser' OR source IS NULL)
-  AND customer_id NOT LIKE 'NA'
-  AND service IN ('Fresh_Car', 'Renewal_Car')
-  AND dl_last_updated >= date('${date}')
+),
+cc_sent_cte AS (
+  -- CC sent = leads passed to Enser via CT table (leads CT received that day)
+  SELECT COUNT(DISTINCT eventprops_customerid) AS cc_sent
+  FROM paytm_ct_reports.cdo_insurance_motor_snapshot_v3
+  WHERE dl_last_updated = date('${date}')
+  AND eventprops_extrafield59 IN ('High Intent', 'Medium Intent', 'Callback with Agent')
+  AND CAST(eventprops_customerid AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
+),
+cc_attempted_cte AS (
+  -- CC attempted = leads Enser actually dialled (have a CDR record)
+  SELECT
+    COUNT(DISTINCT customer_id) AS cc_attempted,
+    COUNT(DISTINCT CASE WHEN
+      COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',1) AS INT),0)*3600 +
+      COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',2) AS INT),0)*60 +
+      COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',3) AS INT),0) > 0
+      THEN customer_id END) AS cc_connected
+  FROM hive.recent_search.enser_callback_data_snapshot_v3
+  WHERE dl_last_updated >= date('${date}')
   AND dl_last_updated < date('${date}') + interval '2' day
   AND date(start_time) = date('${date}')
-  AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)`;
+  AND service IN ('Fresh_Car', 'Renewal_Car')
+  AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
+)
+SELECT
+  s.cc_sent,
+  a.cc_attempted,
+  a.cc_connected
+FROM cc_sent_cte s, cc_attempted_cte a`;
 }
 
 
