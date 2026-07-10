@@ -164,31 +164,38 @@ export function receivedQuery(date: string, leadIds: string[]) {
     return `SELECT CAST(id AS VARCHAR) AS lead_id FROM (VALUES ${values}) AS t(id)`;
   }).join('\n    UNION ALL\n    ');
 
-  const d = new Date(date + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() + 1);
-  const nextDate = d.toISOString().slice(0, 10);
-
+  // Use same table and filters as MIS team
+  // service = 'Fresh_Car' for fresh leads, 'Renewal_Car' for retained
+  // dl_last_updated date filter matches the report date
   return `
 WITH qualified_leads AS (
     ${qualifiedLeadSources}
+),
+enser_calls AS (
+  SELECT
+    CAST(lead_id AS VARCHAR) AS lead_id,
+    disposition1, disposition2, disposition3,
+    talk_duration, start_time
+  FROM hive.recent_search.enser_callback_data_snapshot_v3
+  WHERE source = 'greylabs'
+    AND service IN ('Fresh_Car', 'Renewal_Car')
+    AND dl_last_updated >= date('${date}')
+    AND dl_last_updated < date('${date}') + interval '1' day
+    AND CAST(lead_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)
 )
 SELECT
-  COUNT(DISTINCT CAST(customer_id AS VARCHAR)) AS cc_sent,
-  COUNT(DISTINCT CASE WHEN COALESCE(disposition1,'') <> '' OR COALESCE(disposition2,'') <> '' OR COALESCE(disposition3,'') <> '' THEN CAST(customer_id AS VARCHAR) END) AS cc_attempted,
+  COUNT(DISTINCT lead_id) AS cc_sent,
+  COUNT(DISTINCT CASE WHEN COALESCE(disposition1,'') <> ''
+    OR COALESCE(disposition2,'') <> '' OR COALESCE(disposition3,'') <> ''
+    THEN lead_id END) AS cc_attempted,
   COUNT(DISTINCT CASE WHEN
-    IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration,':',1),'') AS INT),0)*3600+
-    IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration,':',2),'') AS INT),0)*60+
-    IFNULL(CAST(NULLIF(SPLIT_PART(talk_duration,':',3),'') AS INT),0)>0
-    THEN CAST(customer_id AS VARCHAR) END) AS cc_connected
-FROM glue_catalog.recent_search_partition.enser_callback_data
-WHERE (source = 'enser' OR source IS NULL)
-  AND customer_id <> 'NA'
-  AND date >= DATE_FORMAT(CAST('${date}' AS DATE), '%Y%m%d')
-  AND date < DATE_FORMAT(CAST('${nextDate}' AS DATE), '%Y%m%d')
-  AND created_on >= '${date} 00:00:00'
-  AND created_on < '${nextDate} 00:00:00'
-  AND CAST(customer_id AS VARCHAR) IN (SELECT lead_id FROM qualified_leads)`;
+    COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',1) AS INT),0)*3600 +
+    COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',2) AS INT),0)*60 +
+    COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',3) AS INT),0) > 0
+    THEN lead_id END) AS cc_connected
+FROM enser_calls`;
 }
+
 
 export function ccMetricsQueries(date: string, nextDate: string, leadIds: string[]): string[] {
   const base = `
