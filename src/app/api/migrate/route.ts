@@ -101,5 +101,28 @@ export async function GET(request: Request) {
     }
   }
 
+  // 6. Patch cc_sent/connected/attempted from MIS report for Jul 01-07
+  // Source: L5 Leads Summary shared by call centre (Jul 08 2026)
+  const misData: Record<string, {cc_sent:number,cc_attempted:number,cc_connected:number,cc_converted:number}> = {
+    '2026-07-01': { cc_sent:393, cc_attempted:393, cc_connected:309, cc_converted:6 },
+    '2026-07-02': { cc_sent:494, cc_attempted:449, cc_connected:264, cc_converted:0 },
+    '2026-07-03': { cc_sent:457, cc_attempted:401, cc_connected:282, cc_converted:1 },
+    '2026-07-04': { cc_sent:578, cc_attempted:533, cc_connected:440, cc_converted:9 },
+    '2026-07-05': { cc_sent:522, cc_attempted:471, cc_connected:375, cc_converted:9 },
+    '2026-07-06': { cc_sent:689, cc_attempted:648, cc_connected:527, cc_converted:9 },
+    '2026-07-07': { cc_sent:645, cc_attempted:581, cc_connected:482, cc_converted:6 },
+  };
+  for (const [date, cc] of Object.entries(misData)) {
+    const key = `funnel:row:v3:${date}`;
+    const raw = await redis.get<string>(key);
+    const row: any = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : { date };
+    Object.assign(row, cc);
+    row.cc_conversion_on_connect = cc.cc_connected > 0 ? cc.cc_converted / cc.cc_connected : 0;
+    row.gap = (row.bot_qualified||0) - cc.cc_sent;
+    await redis.set(key, JSON.stringify(row));
+    await redis.zadd('funnel:index:v3', { score: parseInt(date.replace(/-/g,'')), member: date });
+    results[`mis_patch:${date}`] = `cc_sent=${cc.cc_sent} cc_connected=${cc.cc_connected} cc_converted=${cc.cc_converted}`;
+  }
+
   return NextResponse.json({ success: true, count: Object.keys(results).length, results });
 }
