@@ -171,7 +171,7 @@ export async function fetchGreylabsData(dateStr: string) {
   const mon3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mm)-1];
   const targetLabel = `${dd}-${mon3}-${yyyy.slice(2)}`; // e.g. "02-Jul-26"
   console.log(`Looking for email with label: ${targetLabel}`);
-  let bestId = messages[0].id!;
+  let bestId: string | null = null;
   let bestLeadCount = 0;
   // Find all emails matching targetLabel sent on the target date
   // Pick the one with the highest Total Leads count (most complete/correct report)
@@ -200,6 +200,10 @@ export async function fetchGreylabsData(dateStr: string) {
       bestId = m.id!;
       console.log(`Best match (latest same-day): ${m.id} totalLeads=${leadCount}`);
     }
+  }
+  if (!bestId) {
+    console.log(`No email found with exact label "${targetLabel}" sent on ${dateStr} — refusing to guess. Use bulk Excel upload for this date instead.`);
+    return null;
   }
   console.log(`Using email: ${bestId} totalLeads=${bestLeadCount}`);
   const msg = await gmail.users.messages.get({ userId: 'me', id: bestId, format: 'full' });
