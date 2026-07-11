@@ -216,7 +216,7 @@ export async function fetchGreylabsData(dateStr: string) {
   const attachment = findXlsxAttachment(parts);
   if (attachment) {
     try {
-      const ids = await extractLeadIds(gmail, messages[0].id!, attachment.attachmentId);
+      const ids = await extractLeadIds(gmail, bestId, attachment.attachmentId);
       freshIds = ids.freshIds;
       retainedIds = ids.retainedIds;
       freshRows = ids.freshRows || [];
@@ -224,6 +224,26 @@ export async function fetchGreylabsData(dateStr: string) {
     } catch (e: any) { console.log('Could not extract Lead IDs:', e.message); }
   } else {
     console.log('No xlsx attachment found in email');
+  }
+  // Override fragile email-body-regex intent counts with reliable per-row Quality column tallies
+  const tally = (rows: any[]) => {
+    const out = { high: 0, medium: 0, low: 0, callback: 0 };
+    for (const r of rows) {
+      const q = String(r.quality || '').trim().toLowerCase();
+      if (q === 'high intent') out.high++;
+      else if (q === 'medium intent') out.medium++;
+      else if (q === 'low intent') out.low++;
+      else if (q === 'callback with agent') out.callback++;
+    }
+    return out;
+  };
+  if (freshRows.length > 0) {
+    const t = tally(freshRows);
+    funnelData.fresh = { ...funnelData.fresh, high: t.high, medium: t.medium, low: t.low, callback: t.callback };
+  }
+  if (retainedRows.length > 0 && funnelData.retained) {
+    const t = tally(retainedRows);
+    funnelData.retained = { ...funnelData.retained, high: t.high, medium: t.medium, low: t.low, callback: t.callback };
   }
   return { ...funnelData, freshIds, retainedIds, freshRows, retainedRows };
 }
