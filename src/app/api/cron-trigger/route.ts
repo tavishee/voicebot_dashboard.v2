@@ -20,6 +20,12 @@ export async function GET(request: Request) {
   const date = url.searchParams.get('date') || new Date().toISOString().slice(0, 10);
   const result: Record<string, any> = { date };
 
+  // Jun 23-30 data comes only from the manual bulk backfill Excel — never overwrite via Gmail
+  const BULK_BACKFILL_DATES = ['2026-06-23','2026-06-24','2026-06-25','2026-06-26','2026-06-27','2026-06-28','2026-06-29','2026-06-30'];
+  if (BULK_BACKFILL_DATES.includes(date)) {
+    return NextResponse.json({ date, gmail: { success: false, message: 'Skipped — sourced from manual bulk backfill Excel, not Gmail' } });
+  }
+
   try {
     const redis = getRedis();
     if (!redis) return NextResponse.json({ error: 'Redis not configured' }, { status: 500 });
