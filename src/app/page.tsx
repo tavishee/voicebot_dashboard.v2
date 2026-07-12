@@ -800,7 +800,7 @@ export default function Dashboard(){
                 <thead style={{position:'sticky' as const,top:0,zIndex:10}}>
                   <tr style={{borderBottom:`2px solid ${C.border}`,background:C.surface}}>
                     <th style={{textAlign:'left' as const,padding:'8px 12px',fontWeight:600,color:C.text2,position:'sticky' as const,left:0,background:C.surface,minWidth:100,zIndex:20}}>Cohort</th>
-                    <th style={{textAlign:'right' as const,padding:'8px 12px',fontWeight:600,color:C.text2,whiteSpace:'nowrap' as const}}>{retMetric==='enser'?'CC Attempted':'Leads Sent'}</th>
+                    <th style={{textAlign:'right' as const,padding:'8px 12px',fontWeight:600,color:C.text2,whiteSpace:'nowrap' as const}}>{retMetric==='enser'?'CC Received':'Leads Sent'}</th>
                     {[0,1,2,3,4,5,6].slice(0,retMetric==='enser'?7:5).map(d=>(
                       <th key={d} style={{textAlign:'right' as const,padding:'8px 12px',fontWeight:600,color:C.text2,whiteSpace:'nowrap' as const,background:C.surface}}>Day {d}</th>
                     ))}
