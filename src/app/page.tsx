@@ -922,7 +922,7 @@ export default function Dashboard(){
               </div>}
               {askMessages.map((m,i)=>(
                 <div key={i} style={{alignSelf:m.role==='user'?'flex-end':'flex-start',maxWidth:'85%'}}>
-                  <div style={{padding:'8px 12px',borderRadius:10,background:m.role==='user'?C.blueM:C.surface,color:m.role==='user'?'#fff':C.text1,border:m.role==='assistant'?`1px solid ${C.border}`:'none',fontSize:13,whiteSpace:'pre-wrap' as const}}>
+                  <div style={{padding:'8px 12px',borderRadius:10,background:m.role==='user'?C.blueM:C.surface,color:m.role==='user'?'#fff':C.text,border:m.role==='assistant'?`1px solid ${C.border}`:'none',fontSize:13,whiteSpace:'pre-wrap' as const}}>
                     {m.text}
                   </div>
                   {m.sql&&<details style={{marginTop:4,fontSize:11,color:C.text3}}>
