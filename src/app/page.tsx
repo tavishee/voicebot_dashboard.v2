@@ -91,6 +91,9 @@ export default function Dashboard(){
   const[retLoading,setRetLoading]=useState(false);
   const[retMetric,setRetMetric]=useState<'connected'|'qualified'|'enser'>('connected');
   const[retCumulative,setRetCumulative]=useState(false);
+  const[askMessages,setAskMessages]=useState<{role:'user'|'assistant',text:string,sql?:string,rows?:any[]}[]>([]);
+  const[askInput,setAskInput]=useState('');
+  const[askLoading,setAskLoading]=useState(false);
   const[retEnserDenom,setRetEnserDenom]=useState<'sent'|'attempted'>('sent');
 
   const load=()=>{
@@ -237,6 +240,47 @@ export default function Dashboard(){
 
 
   // ── SINGLE SYNC ALL ── Gmail + grey + Enser cc + retention conversions, all dates at once
+  // Reusable extension query helper
+  const extQueryGlobal=(sql:string,timeoutMs=90000)=>new Promise<any>((res,rej)=>{
+    const id=Math.random().toString(36).slice(2);
+    const t=setTimeout(()=>{window.removeEventListener('message',h);rej(new Error('Query timed out'));},timeoutMs);
+    function h(e:MessageEvent){if(e.data?.source==='superset-bridge'&&e.data?.id===id){clearTimeout(t);window.removeEventListener('message',h);e.data.success?res(e.data.data):rej(new Error(e.data.error||'Query failed'));}}
+    window.addEventListener('message',h);
+    window.postMessage({source:'voicebot-dashboard',type:'RUN_QUERY',id,sql},'*');
+  });
+
+  const askQuestion=async()=>{
+    const q=askInput.trim();
+    if(!q||askLoading)return;
+    setAskInput('');
+    setAskMessages(m=>[...m,{role:'user',text:q}]);
+    setAskLoading(true);
+    try{
+      // Step 1: generate SQL
+      const genRes=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'generate_sql',question:q})});
+      const gen=await genRes.json();
+      if(!gen.sql){
+        setAskMessages(m=>[...m,{role:'assistant',text:gen.explanation||"I can't answer that with the available data."}]);
+        setAskLoading(false);return;
+      }
+      // Step 2: run via extension
+      let rows:any[]=[];let queryError='';
+      try{
+        rows=await extQueryGlobal(gen.sql);
+      }catch(e:any){
+        queryError=e.message;
+      }
+      // Step 3: summarize
+      const sumRes=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'summarize',question:q,sql:gen.sql,rows,error:queryError})});
+      const sum=await sumRes.json();
+      setAskMessages(m=>[...m,{role:'assistant',text:sum.answer||'Could not generate an answer.',sql:gen.sql,rows}]);
+    }catch(e:any){
+      setAskMessages(m=>[...m,{role:'assistant',text:`Error: ${e.message}`}]);
+    }finally{
+      setAskLoading(false);
+    }
+  };
+
   const runFullBulkSync=async()=>{
     setBulkCancelled(false);setBulkLoading(true);setBulkStatus('Building date list…');
     const dates:string[]=[];
@@ -499,7 +543,7 @@ export default function Dashboard(){
     </div>
   );
 
-  const TABS=[{id:'funnel',label:'Funnel'},{id:'trends',label:'Trends'},{id:'wow',label:'Week on week'},{id:'log',label:'Log'},{id:'retention',label:'Retention'},{id:'upload',label:'+ Data',small:true}];
+  const TABS=[{id:'funnel',label:'Funnel'},{id:'trends',label:'Trends'},{id:'wow',label:'Week on week'},{id:'log',label:'Log'},{id:'retention',label:'Retention'},{id:'ask',label:'Ask AI'},{id:'upload',label:'+ Data',small:true}];
 
   return(
     <>
@@ -865,6 +909,40 @@ export default function Dashboard(){
             {retStatus&&<div style={{fontSize:12,padding:'8px 10px',borderRadius:6,background:retStatus.startsWith('✓')?C.greenL:C.redL,color:retStatus.startsWith('✓')?C.green:C.red}}>{retStatus}</div>}
           </div>
         </>}
+
+        {tab==='ask'&&<div style={{maxWidth:800,margin:'0 auto'}}>
+          <div style={{...card,minHeight:400,display:'flex',flexDirection:'column' as const}}>
+            <div style={cardT}>Ask Anything — queries live Superset data via your Chrome extension</div>
+            <div style={{fontSize:12,color:C.text3,marginBottom:12}}>
+              Ask about calls, conversions, intent breakdowns, or trends. Make sure Superset is open in a tab.
+            </div>
+            <div style={{flex:1,overflowY:'auto' as const,marginBottom:12,display:'flex',flexDirection:'column' as const,gap:10,maxHeight:450}}>
+              {askMessages.length===0&&<div style={{color:C.text3,fontSize:13,textAlign:'center' as const,padding:'30px 0'}}>
+                Try: "How many high intent leads did we get yesterday?" or "What's our conversion rate this week?"
+              </div>}
+              {askMessages.map((m,i)=>(
+                <div key={i} style={{alignSelf:m.role==='user'?'flex-end':'flex-start',maxWidth:'85%'}}>
+                  <div style={{padding:'8px 12px',borderRadius:10,background:m.role==='user'?C.blueM:C.surface,color:m.role==='user'?'#fff':C.text1,border:m.role==='assistant'?`1px solid ${C.border}`:'none',fontSize:13,whiteSpace:'pre-wrap' as const}}>
+                    {m.text}
+                  </div>
+                  {m.sql&&<details style={{marginTop:4,fontSize:11,color:C.text3}}>
+                    <summary style={{cursor:'pointer'}}>View query & data ({m.rows?.length||0} rows)</summary>
+                    <pre style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:8,marginTop:4,overflowX:'auto' as const,fontSize:10}}>{m.sql}</pre>
+                    {m.rows&&m.rows.length>0&&<pre style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:8,marginTop:4,overflowX:'auto' as const,fontSize:10,maxHeight:150,overflowY:'auto' as const}}>{JSON.stringify(m.rows,null,2)}</pre>}
+                  </details>}
+                </div>
+              ))}
+              {askLoading&&<div style={{alignSelf:'flex-start',fontSize:13,color:C.text3,fontStyle:'italic' as const}}>Thinking…</div>}
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <input style={{...inp,flex:1}} placeholder="Ask a question…" value={askInput}
+                onChange={e=>setAskInput(e.target.value)}
+                onKeyDown={e=>{if(e.key==='Enter')askQuestion();}}/>
+              <button style={{...btnP,background:C.blueM}} onClick={askQuestion} disabled={askLoading||!askInput.trim()}>Ask</button>
+            </div>
+          </div>
+        </div>}
+
         {tab==='upload'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,maxWidth:1000}}>
           {/* Enser via Superset */}
           <div style={card}>
