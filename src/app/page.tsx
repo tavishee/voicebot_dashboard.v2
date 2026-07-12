@@ -812,14 +812,19 @@ export default function Dashboard(){
                     const maxDay=retMetric==='enser'?6:4;
                     let total=0;
                     const cells=[];
+                    // Don't show any value (even cumulative) for a day that hasn't happened yet
+                    const cohortDateObj=new Date(row.cohort_date+'T00:00:00Z');
+                    const todayObj=new Date(todayStr()+'T00:00:00Z');
+                    const daysElapsed=Math.floor((todayObj.getTime()-cohortDateObj.getTime())/86400000);
                     for(let d=0;d<=maxDay;d++){
+                      const isFuture=d>daysElapsed;
                       const absVal=retMetric==='enser'?(row.enser?.[`day${d}`]?.converted||0):(row.grey?.[`day${d}`]?.[retMetric]||0);
-                      total+=absVal;
+                      if(!isFuture)total+=absVal;
                       const cumVal=total; // cumulative = running sum up to this day
-                      const val=retCumulative?cumVal:absVal;
+                      const val=isFuture?0:(retCumulative?cumVal:absVal);
                       const denom = retMetric==='enser' ? (row.cc_attempted||row.cc_sent||0) : (row.leads_sent||0);
                       const p2 = denom>0 ? Math.round(val/denom*1000)/10 : 0;
-                      cells.push({val,pct:p2});
+                      cells.push({val,pct:p2,isFuture});
                     }
                     const denom2 = retMetric==='enser' ? (row.cc_attempted||row.cc_sent||0) : (row.leads_sent||0);
                     // In cumulative mode, total column shows same as last non-empty day (already the max)
@@ -830,9 +835,9 @@ export default function Dashboard(){
                       <tr key={row.cohort_date} style={{borderBottom:`1px solid ${C.borderL}`}}>
                         <td style={{padding:'7px 12px',fontWeight:500,position:'sticky' as const,left:0,background:C.surface}}>{row.cohort_date?.slice(5)}</td>
                         <td style={{padding:'7px 12px',textAlign:'right' as const,fontVariantNumeric:'tabular-nums' as const,color:C.text2}}>{(retMetric==='enser'?(row.cc_attempted||row.cc_sent||0):(row.leads_sent||0)).toLocaleString()}</td>
-                        {cells.map((c2,i)=>(
+                        {cells.map((c2:any,i)=>(
                           <td key={i} style={{padding:'7px 12px',textAlign:'right' as const,whiteSpace:'nowrap' as const}}>
-                            {c2.val>0
+                            {(!c2.isFuture&&c2.val>0)
                               ?<><span style={{fontWeight:500,color:col}}>{c2.pct}%</span><span style={{fontSize:10,color:C.text3,marginLeft:3}}>({c2.val})</span></>
                               :<span style={{color:C.borderL}}>—</span>
                             }
