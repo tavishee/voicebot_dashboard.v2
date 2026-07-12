@@ -145,3 +145,52 @@ WHERE (source = 'enser' OR source IS NULL)
 export function ccMetricsQuery(date: string, nextDate: string, leadIds: string[] = []) {
   return ccMetricsQueries(date, nextDate, leadIds)[0];
 }
+
+
+// Grey funnel (Leads Sent/Connected/Qualified) computed directly from Superset —
+// replaces Gmail-based parsing. Distinguishes Fresh vs Retained via lookback:
+// if a lead's first-ever appearance in the system is this date, it's Fresh; else Retained.
+// Note: 'intent' field is only reliably populated for the last ~2 days, so
+// qualified/high/medium/low/callback will show 0 for older dates — sent/connected still work.
+export function greyFunnelQuery(date: string) {
+  return `
+WITH calls AS (
+  SELECT
+    CAST(lead_id AS VARCHAR) AS lead_id,
+    date(start_time) AS call_date,
+    talk_duration,
+    intent
+  FROM recent_search.enser_callback_data_snapshot_v3
+  WHERE source = 'greylabs'
+    AND dl_last_updated >= date('${date}') - interval '15' day
+    AND dl_last_updated <= date('${date}')
+    AND date(start_time) >= date('${date}') - interval '15' day
+    AND date(start_time) <= date('${date}')
+),
+first_seen AS (
+  SELECT lead_id, MIN(call_date) AS first_date
+  FROM calls
+  GROUP BY lead_id
+),
+today_calls AS (
+  SELECT c.lead_id, c.talk_duration, c.intent, f.first_date, c.call_date
+  FROM calls c
+  JOIN first_seen f ON c.lead_id = f.lead_id
+  WHERE c.call_date = date('${date}')
+)
+SELECT
+  CASE WHEN first_date = call_date THEN 'fresh' ELSE 'retained' END AS lead_type,
+  COUNT(DISTINCT lead_id) AS sent,
+  COUNT(DISTINCT CASE WHEN
+    COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',1) AS INT),0)*3600+
+    COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',2) AS INT),0)*60+
+    COALESCE(TRY_CAST(SPLIT_PART(talk_duration,':',3) AS INT),0) > 0
+    THEN lead_id END) AS connected,
+  COUNT(DISTINCT CASE WHEN intent IN ('High Intent','Medium Intent','Callback with Agent') THEN lead_id END) AS qualified,
+  COUNT(DISTINCT CASE WHEN intent = 'High Intent' THEN lead_id END) AS high,
+  COUNT(DISTINCT CASE WHEN intent = 'Medium Intent' THEN lead_id END) AS medium,
+  COUNT(DISTINCT CASE WHEN intent = 'Low Intent' THEN lead_id END) AS low,
+  COUNT(DISTINCT CASE WHEN intent = 'Callback with Agent' THEN lead_id END) AS callback
+FROM today_calls
+GROUP BY 1`;
+}
